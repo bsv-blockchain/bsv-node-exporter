@@ -52,9 +52,15 @@ The exporter adds no deployment labels such as network, host or node type. Attac
 
 ## Teranode notes
 
-- Set `BSV_MEMPOOL_SOURCE=miningcandidate`, because Teranode does not implement `getmempoolinfo`.
-- On long chains, Teranode's `getchaintips` may not return at all. If so, set `BSV_COLLECTORS=blockchain,peers,mempool`. Otherwise every scrape starts another expensive call that only ends at `BSV_RPC_TIMEOUT`.
-- With its RPC cache enabled, Teranode caches `getchaintips` for up to 300s, so chaintip series can lag by up to 5 minutes.
+Recommended Teranode settings:
+
+```sh
+BSV_MEMPOOL_SOURCE=miningcandidate
+BSV_COLLECTORS=blockchain,peers,mempool
+```
+
+- `miningcandidate` is required, because Teranode does not implement `getmempoolinfo`.
+- Leave the `chaintips` collector off for Teranode. On long chains its `getchaintips` may not return at all, so every scrape would start another expensive call that only ends at `BSV_RPC_TIMEOUT`.
 - `getminingcandidate` is not strictly read-only: the node builds and caches a candidate. At normal scrape intervals that is harmless.
 
 ## Running
