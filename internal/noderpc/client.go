@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,16 +40,27 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-// maxErrorMessage bounds how much of a node-supplied message reaches logs.
-const maxErrorMessage = 120
-
-// Error renders the code and a bounded, sanitised prefix of the node's
-// message: enough for "Work queue depth exceeded", not enough to flood logs.
-func (e *Error) Error() string {
-	return fmt.Sprintf("rpc error %d: %s", e.Code, sanitizeMessage(e.Message))
+// knownCodes describes the common JSON-RPC and bitcoind error codes.
+var knownCodes = map[int]string{
+	-32700: "parse error",
+	-32600: "invalid request",
+	-32601: "method not found",
+	-32602: "invalid params",
+	-32603: "internal error",
+	-28:    "node is warming up",
+	-1:     "miscellaneous error",
 }
 
-func sanitizeMessage(s string) string { return Bound(s, maxErrorMessage) }
+// Error renders the code, and a fixed description for well-known codes. The
+// node's message is never rendered: it is node-controlled text, and no filter
+// on it holds against a node that has our credentials (one inserted byte
+// defeats a substring match).
+func (e *Error) Error() string {
+	if d, ok := knownCodes[e.Code]; ok {
+		return fmt.Sprintf("rpc error %d (%s)", e.Code, d)
+	}
+	return fmt.Sprintf("rpc error %d", e.Code)
+}
 
 // Bound returns s with control and format characters replaced by spaces and at
 // most limit bytes long, including the "..." it ends with when s was cut. Every
@@ -145,8 +155,7 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 		return fmt.Errorf("%s: HTTP %d, undecodable response", method, resp.StatusCode)
 	}
 	if r.Error != nil {
-		redacted := &Error{Code: r.Error.Code, Message: c.redact(r.Error.Message)}
-		return fmt.Errorf("%s: HTTP %d: %w", method, resp.StatusCode, redacted)
+		return fmt.Errorf("%s: HTTP %d: %w", method, resp.StatusCode, r.Error)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: HTTP %d", method, resp.StatusCode)
@@ -174,52 +183,6 @@ func describeDecodeError(err error) string {
 	default:
 		return "result does not match the expected shape"
 	}
-}
-
-// minRedactable is the shortest credential redaction can hide. Anything shorter
-// can occur in any text, including this exporter's own messages.
-const minRedactable = 4
-
-// withheld replaces a node message that contained a configured credential.
-const withheld = "message withheld: it contained a configured credential"
-
-// redact keeps a node-supplied message out of the logs when it contains a
-// configured credential: a compromised node receives them on every call and
-// could echo them back. Nothing is substituted, so the output can neither grow
-// nor reintroduce a credential through the replacement text. Only the part
-// that could reach a log (the capped, sanitised prefix plus room for a
-// credential straddling the cut) is examined.
-func (c *Client) redact(msg string) string {
-	var secrets []string
-	longest := 0
-	add := func(s string) {
-		if len(s) >= minRedactable {
-			secrets = append(secrets, s)
-			longest = max(longest, len(s))
-		}
-	}
-	if c.user != "" || c.password != "" {
-		pair := c.user + ":" + c.password
-		add(base64.StdEncoding.EncodeToString([]byte(pair)))
-		add(pair)
-	}
-	add(c.password)
-	add(c.user)
-	if len(secrets) == 0 {
-		return msg
-	}
-	window := Bound(msg, maxErrorMessage+longest+len("..."))
-	for _, s := range secrets {
-		if strings.Contains(window, s) {
-			for _, s2 := range secrets {
-				if strings.Contains(withheld, s2) {
-					return ""
-				}
-			}
-			return withheld
-		}
-	}
-	return msg
 }
 
 // Fixed transport failure categories. net/http errors quote what the node sent

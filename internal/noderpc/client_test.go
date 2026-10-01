@@ -169,33 +169,6 @@ func TestCallHonoursContext(t *testing.T) {
 	}
 }
 
-func TestErrorMessageIsBoundedAndSanitised(t *testing.T) {
-	e := &Error{Code: -28, Message: "Work queue\n\x1b[31m depth exceeded " + strings.Repeat("x", 5000)}
-	got := e.Error()
-	if len(got) > 200 {
-		t.Errorf("Error() is %d bytes, want <= 200", len(got))
-	}
-	if !strings.HasPrefix(got, "rpc error -28: Work queue") {
-		t.Errorf("Error() = %q, want code and message prefix", got)
-	}
-	for _, r := range got {
-		if r < 0x20 || r == 0x7f {
-			t.Fatalf("Error() contains control character %q: %q", r, got)
-		}
-	}
-}
-
-func TestErrorMessageCapCountsMultibyteRunes(t *testing.T) {
-	e := &Error{Code: -1, Message: strings.Repeat("a", maxErrorMessage-1) + "😀😀"}
-	msg := strings.TrimPrefix(e.Error(), "rpc error -1: ")
-	if len(msg) > maxErrorMessage {
-		t.Errorf("message part is %d bytes including the suffix, cap is %d: %q", len(msg), maxErrorMessage, msg)
-	}
-	if !strings.HasSuffix(msg, "...") {
-		t.Errorf("truncated message should end with ...: %q", msg)
-	}
-}
-
 func TestDecodeErrorDoesNotEchoNodeData(t *testing.T) {
 	// Internal security audit, finding 2: Go's typed decode error keeps the
 	// offending literal, so a node could put ~32 MiB of digits into one log line.
@@ -304,14 +277,14 @@ func TestBound(t *testing.T) {
 	}
 }
 
-func TestRedactionNeverReintroducesOrExpands(t *testing.T) {
+func TestReflectedCredentialsNeverReachTheError(t *testing.T) {
 	cases := []struct{ name, user, password, message string }{
 		// "[redacted]" would put a username of "redacted" back into the output.
 		{"credential inside the marker", "redacted", "s3cret-pw", "login failed for redacted"},
 		// Substituting a short credential everywhere multiplies the message.
 		{"dense repeats", "rpcuser", "aaaa", strings.Repeat("a", 1<<20)},
-		// A credential split across the 120-byte cut must not leave a partial copy.
-		{"across the cut", "rpcuser", "s3cret-pw", strings.Repeat("x", maxErrorMessage-4) + "s3cret-pw"},
+		// A credential near where a cap would cut must not leave a partial copy.
+		{"across the cut", "rpcuser", "s3cret-pw", strings.Repeat("x", 116) + "s3cret-pw"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -380,5 +353,17 @@ func TestTransportErrorsCarryNoNodeBytes(t *testing.T) {
 				t.Errorf("error quotes node bytes: %q", err.Error())
 			}
 		})
+	}
+}
+
+func TestRPCErrorRendersOnlyTheCode(t *testing.T) {
+	// Review of #4: substring withholding is defeated by inserting a single byte
+	// (s3c\x00retpw is logged as "s3c retpw"). The node's message is never rendered.
+	e := &Error{Code: -28, Message: "s3c\x00ret-pw " + strings.Repeat("y", 1<<20)}
+	if got, want := e.Error(), "rpc error -28 (node is warming up)"; got != want {
+		t.Errorf("Error() = %.80q, want %q", got, want)
+	}
+	if got, want := (&Error{Code: -12345, Message: "anything"}).Error(), "rpc error -12345"; got != want {
+		t.Errorf("unknown code: Error() = %q, want %q", got, want)
 	}
 }

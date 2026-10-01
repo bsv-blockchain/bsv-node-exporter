@@ -151,8 +151,8 @@ receivers:
 
 - Credentials never appear in logs, metric labels or error messages, and a `BSV_RPC_URL` containing credentials is rejected.
 - Only `getblockchaininfo`, `getpeerinfo`, `getmempoolinfo`, `getminingcandidate` and `getchaintips` can be called. There is no RPC passthrough.
-- RPC calls never follow redirects. Each method has a response budget: 1 MiB for `getblockchaininfo`, `getmempoolinfo` and `getminingcandidate`, 8 MiB for `getpeerinfo`, 16 MiB for `getchaintips`. Peer and chain-tip arrays are decoded one element at a time and rejected beyond 10,000 peers or 100,000 tips, so a dense response cannot amplify memory.
-- Logged errors carry no node-supplied data except a JSON-RPC error message, capped at 120 bytes with control characters replaced. If that message contains a configured credential (user, password, `user:password` or its Basic token), the message is withheld and only the error code is logged. Credentials shorter than 4 bytes can't be hidden this way, since they can occur in any text. Every logged error is capped at 300 bytes. The RPC endpoint is logged as scheme and host only.
+- RPC calls never follow redirects. Each method has a response budget: 1 MiB for `getblockchaininfo`, `getmempoolinfo` and `getminingcandidate`, 8 MiB for `getpeerinfo`, 16 MiB for `getchaintips`. Response headers are capped at 64 KiB. Peer and chain-tip arrays are decoded one element at a time and rejected beyond 10,000 peers or 100,000 tips.
+- Logged errors carry no node-supplied data. A JSON-RPC error is logged as its code, plus a fixed description for well-known codes; the node's message is never logged. Transport and decode failures map to fixed categories. Every logged error is capped at 300 bytes. The RPC endpoint is logged as scheme and host only.
 - The HTTP server sets read, write and header timeouts, and serves only `/metrics` and `/healthz`.
 - The only direct dependencies are the Go standard library and `prometheus/client_golang`.
 - CI runs `govulncheck` and `golangci-lint`, and release images are scanned with trivy.
