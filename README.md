@@ -1,6 +1,6 @@
 # bsv-node-exporter
 
-A Prometheus exporter for BSV nodes: [SV Node](https://github.com/bitcoin-sv/bitcoin-sv) and [Teranode](https://github.com/bsv-blockchain/teranode). On every scrape it makes up to four read-only JSON-RPC calls, and turns them into about 30 node-health, fork and mempool series per node. It is scrape-only and stateless.
+A Prometheus exporter for BSV nodes: [SV Node](https://github.com/bitcoin-sv/bitcoin-sv) and [Teranode](https://github.com/bsv-blockchain/teranode). On every scrape it makes up to four JSON-RPC calls from a fixed allowlist, and turns them into about 30 node-health, fork and mempool series per node. It is scrape-only and stateless.
 
 ## Configuration
 
@@ -42,7 +42,7 @@ A failed call sets `bsv_rpc_up{method}` to 0 and omits that call's series. A scr
 **Fork buckets.**
 
 - The active height is the highest `height` among tips with status `active`.
-- A fork is a non-`active` tip with `active height − height <= window`, for `window` 144 and 10000.
+- A fork is a non-`active` tip with `active height − height <= window`, for `window` 144 and 10000. Tips above the active height (headers seen ahead of validation) count too, as in the metrics this replaces.
 - `length="single"` counts tips with `branchlen == 1`.
 - `length="long"` counts tips with `branchlen > 1`.
 

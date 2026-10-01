@@ -56,7 +56,7 @@ const svnodeExpected = `
 # HELP bsv_blocks Height of the active chain, from getblockchaininfo.
 # TYPE bsv_blocks gauge
 bsv_blocks 34346
-# HELP bsv_chaintip_forks Non-active chain tips at most window blocks below the active tip, by branch length (single: 1, long: more than 1).
+# HELP bsv_chaintip_forks Non-active chain tips with height at least the active height minus window, by branch length (single: 1, long: more than 1).
 # TYPE bsv_chaintip_forks gauge
 bsv_chaintip_forks{length="long",window="10000"} 1
 bsv_chaintip_forks{length="long",window="144"} 0
@@ -108,7 +108,7 @@ const teranodeExpected = `
 # HELP bsv_blocks Height of the active chain, from getblockchaininfo.
 # TYPE bsv_blocks gauge
 bsv_blocks 969139
-# HELP bsv_chaintip_forks Non-active chain tips at most window blocks below the active tip, by branch length (single: 1, long: more than 1).
+# HELP bsv_chaintip_forks Non-active chain tips with height at least the active height minus window, by branch length (single: 1, long: more than 1).
 # TYPE bsv_chaintip_forks gauge
 bsv_chaintip_forks{length="long",window="10000"} 2
 bsv_chaintip_forks{length="long",window="144"} 0

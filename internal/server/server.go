@@ -19,17 +19,17 @@ const MaxScrapesInFlight = 2
 func New(addr string, g prometheus.Gatherer, writeTimeout time.Duration, logger *slog.Logger) *http.Server {
 	errLog := slog.NewLogLogger(logger.Handler(), slog.LevelError)
 	mux := http.NewServeMux()
-	mux.Handle("GET /metrics", promhttp.HandlerFor(g, promhttp.HandlerOpts{
+	mux.Handle("GET /metrics", getOnly(promhttp.HandlerFor(g, promhttp.HandlerOpts{
 		ErrorLog:            errLog,
 		ErrorHandling:       promhttp.ContinueOnError,
 		MaxRequestsInFlight: MaxScrapesInFlight,
 		// Answer 503 just before the write deadline instead of dropping the connection.
 		Timeout: writeTimeout - time.Second,
-	}))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	})))
+	mux.Handle("GET /healthz", getOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok\n"))
-	})
+	})))
 	return &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -40,4 +40,17 @@ func New(addr string, g prometheus.Gatherer, writeTimeout time.Duration, logger 
 		MaxHeaderBytes:    8 << 10,
 		ErrorLog:          errLog,
 	}
+}
+
+// getOnly rejects HEAD, which a "GET /path" mux pattern also matches: a HEAD on
+// /metrics would otherwise run every node RPC and take a scrape slot.
+func getOnly(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

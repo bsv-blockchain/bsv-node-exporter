@@ -45,7 +45,7 @@ var (
 	descChaintips = prometheus.NewDesc("bsv_chaintips",
 		"Known chain tips by status.", []string{"status"}, nil)
 	descForks = prometheus.NewDesc("bsv_chaintip_forks",
-		"Non-active chain tips at most window blocks below the active tip, by branch length (single: 1, long: more than 1).",
+		"Non-active chain tips with height at least the active height minus window, by branch length (single: 1, long: more than 1).",
 		[]string{"window", "length"}, nil)
 
 	allDescs = []*prometheus.Desc{descRPCUp, descRPCDuration, descBlocks, descHeaders, descDifficulty,

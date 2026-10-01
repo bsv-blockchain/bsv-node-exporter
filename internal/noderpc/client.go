@@ -1,5 +1,5 @@
 // Package noderpc is a minimal JSON-RPC 1.0 client for SV Node and Teranode,
-// restricted to the read-only methods the exporter needs.
+// restricted to an allowlist of the methods the exporter needs.
 package noderpc
 
 import (
@@ -128,7 +128,7 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 		return fmt.Errorf("%s: HTTP %d, undecodable response", method, resp.StatusCode)
 	}
 	if r.Error != nil {
-		return fmt.Errorf("%s: %w", method, r.Error)
+		return fmt.Errorf("%s: HTTP %d: %w", method, resp.StatusCode, r.Error)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: HTTP %d", method, resp.StatusCode)

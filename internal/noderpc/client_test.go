@@ -77,8 +77,8 @@ func TestCallRPCError(t *testing.T) {
 	if !errors.As(err, &rpcErr) || rpcErr.Code != -32601 {
 		t.Fatalf("err = %v, want *Error code -32601", err)
 	}
-	if !strings.Contains(err.Error(), "getmempoolinfo") {
-		t.Errorf("error does not name method: %v", err)
+	if !strings.Contains(err.Error(), "getmempoolinfo") || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("error does not name method and HTTP status: %v", err)
 	}
 }
 

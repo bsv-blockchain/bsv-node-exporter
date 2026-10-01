@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,5 +107,27 @@ func TestMetricsLimitsConcurrentScrapes(t *testing.T) {
 	wg.Wait()
 	if code != http.StatusServiceUnavailable {
 		t.Fatalf("scrape beyond the in-flight limit = %d, want 503", code)
+	}
+}
+
+// countingCollector records how many times a gather reached it.
+type countingCollector struct{ n *int32 }
+
+func (countingCollector) Describe(chan<- *prometheus.Desc) {}
+func (c countingCollector) Collect(chan<- prometheus.Metric) { atomic.AddInt32(c.n, 1) }
+
+func TestHeadDoesNotScrape(t *testing.T) {
+	var n int32
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(countingCollector{&n})
+	ts := httptest.NewServer(New(":0", reg, 15*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler)
+	defer ts.Close()
+	for _, path := range []string{"/metrics", "/healthz"} {
+		if code, _ := get(t, http.MethodHead, ts.URL+path); code != http.StatusMethodNotAllowed {
+			t.Errorf("HEAD %s = %d, want 405", path, code)
+		}
+	}
+	if got := atomic.LoadInt32(&n); got != 0 {
+		t.Errorf("HEAD /metrics ran %d gathers, want 0", got)
 	}
 }
