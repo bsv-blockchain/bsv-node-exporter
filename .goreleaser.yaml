@@ -30,3 +30,7 @@ release:
   github:
     owner: bsv-blockchain
     name: bsv-node-exporter
+
+# Fixed snapshot version so the release workflow can scan the images before publishing.
+snapshot:
+  version_template: scan

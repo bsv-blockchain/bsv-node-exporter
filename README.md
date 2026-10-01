@@ -11,12 +11,12 @@ Configuration is read from environment variables only.
 | `BSV_RPC_URL` | required | e.g. `http://rpc:9292`. Must not contain credentials |
 | `BSV_RPC_USER` / `BSV_RPC_PASSWORD` | empty | RPC credentials |
 | `BSV_RPC_PASSWORD_FILE` | empty | Read the password from this file instead; takes precedence over `BSV_RPC_PASSWORD` |
-| `BSV_RPC_TIMEOUT` | `10s` | Timeout for each RPC call |
+| `BSV_RPC_TIMEOUT` | `5s` | Timeout for each RPC call. Keep it below the scraper's `scrape_timeout` (default 10s) |
 | `BSV_MEMPOOL_SOURCE` | `mempoolinfo` | `mempoolinfo` or `miningcandidate`. Teranode needs `miningcandidate`: its `getmempoolinfo` is unimplemented |
 | `BSV_COLLECTORS` | `blockchain,peers,mempool,chaintips` | Comma-separated collectors to enable |
 | `LISTEN_ADDR` | `:9480` | HTTP listen address |
 
-The exporter serves `GET /metrics` and `GET /healthz`. `/healthz` never calls the node.
+The exporter serves `GET /metrics` and `GET /healthz`. `/healthz` never calls the node. At most two `/metrics` scrapes run at once; further concurrent scrapes get HTTP 503, so the exporter cannot multiply load on the node. Node RPC never goes through `HTTP_PROXY` / `HTTPS_PROXY`.
 
 ## Metrics
 
@@ -33,7 +33,7 @@ The exporter serves `GET /metrics` and `GET /healthz`. `/healthz` never calls th
 | `bsv_chaintips{status}` | gauge | `getchaintips`, counted by `status` |
 | `bsv_chaintip_forks{window,length}` | gauge | see below |
 
-A failed call sets `bsv_rpc_up{method}` to 0 and omits that call's series. The rest of the scrape is still served, with HTTP 200. Alert on `bsv_rpc_up == 0` for "node unreachable", and on the scraper's own `up` for "exporter down".
+A failed call sets `bsv_rpc_up{method}` to 0 and omits that call's series. A scrape takes at most about `BSV_RPC_TIMEOUT`, so as long as that is below the scraper's `scrape_timeout`, one hung call costs only its own series. The rest of the scrape is still served, with HTTP 200. Alert on `bsv_rpc_up == 0` for "node unreachable", and on the scraper's own `up` for "exporter down".
 
 **Peer kinds.** A peer with a non-empty `peerid` is a Teranode libp2p peer and counts as `p2p`. Teranode sets `inbound` on those peers to mean "connected", not direction, so direction is ignored for them. Every other peer counts as `inbound` when `inbound` is true, and as `outbound` when it is false or missing. Teranode omits `inbound: false` from legacy peers. All three kinds are always emitted.
 
