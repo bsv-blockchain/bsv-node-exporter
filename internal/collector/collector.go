@@ -9,13 +9,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/config"
+	"github.com/bsv-blockchain/bsv-node-exporter/internal/noderpc"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -269,20 +267,7 @@ func (c *Collector) chaintips(ctx context.Context) ([]prometheus.Metric, error) 
 
 // boundedError renders err for logging with control and format characters
 // replaced and at most maxLoggedError bytes: errors can carry node-derived text.
-func boundedError(err error) string {
-	var b strings.Builder
-	for _, r := range err.Error() {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			r = ' '
-		}
-		if b.Len()+utf8.RuneLen(r) > maxLoggedError {
-			b.WriteString("...")
-			break
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
+func boundedError(err error) string { return noderpc.Bound(err.Error(), maxLoggedError) }
 
 var (
 	errNotArray        = errors.New("result is not an array")

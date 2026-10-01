@@ -353,7 +353,7 @@ func TestFailedCallLogLineIsBounded(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 		t.Fatalf("log line: %v: %s", err, buf.String())
 	}
-	if len(rec.Error) > maxLoggedError+3 {
+	if len(rec.Error) > maxLoggedError {
 		t.Errorf("logged error is %d bytes, cap is %d", len(rec.Error), maxLoggedError)
 	}
 	if strings.ContainsAny(rec.Error, "\n\x1b") {

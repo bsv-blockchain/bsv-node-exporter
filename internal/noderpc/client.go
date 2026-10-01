@@ -49,18 +49,26 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("rpc error %d: %s", e.Code, sanitizeMessage(e.Message))
 }
 
-func sanitizeMessage(s string) string {
+func sanitizeMessage(s string) string { return Bound(s, maxErrorMessage) }
+
+// Bound returns s with control and format characters replaced by spaces and at
+// most limit bytes long, including the "..." it ends with when s was cut. Every
+// rune is checked for its encoded size, so the cap holds for multibyte text.
+func Bound(s string, limit int) string {
+	const suffix = "..."
 	var b strings.Builder
+	fit := 0 // length of b at the last rune boundary that leaves room for suffix
 	for _, r := range s {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			r = ' '
 		}
-		// Check the encoded size first, so a multibyte rune cannot overrun the cap.
-		if b.Len()+utf8.RuneLen(r) > maxErrorMessage {
-			b.WriteString("...")
-			break
+		if b.Len()+utf8.RuneLen(r) > limit {
+			return b.String()[:fit] + suffix
 		}
 		b.WriteRune(r)
+		if b.Len() <= limit-len(suffix) {
+			fit = b.Len()
+		}
 	}
 	return b.String()
 }

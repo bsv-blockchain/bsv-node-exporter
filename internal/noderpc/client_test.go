@@ -187,8 +187,8 @@ func TestErrorMessageIsBoundedAndSanitised(t *testing.T) {
 func TestErrorMessageCapCountsMultibyteRunes(t *testing.T) {
 	e := &Error{Code: -1, Message: strings.Repeat("a", maxErrorMessage-1) + "😀😀"}
 	msg := strings.TrimPrefix(e.Error(), "rpc error -1: ")
-	if body := strings.TrimSuffix(msg, "..."); len(body) > maxErrorMessage {
-		t.Errorf("message part is %d bytes, cap is %d: %q", len(body), maxErrorMessage, body)
+	if len(msg) > maxErrorMessage {
+		t.Errorf("message part is %d bytes including the suffix, cap is %d: %q", len(msg), maxErrorMessage, msg)
 	}
 	if !strings.HasSuffix(msg, "...") {
 		t.Errorf("truncated message should end with ...: %q", msg)
@@ -198,7 +198,8 @@ func TestErrorMessageCapCountsMultibyteRunes(t *testing.T) {
 func TestDecodeErrorDoesNotEchoNodeData(t *testing.T) {
 	// Internal security audit, finding 2: Go's typed decode error keeps the
 	// offending literal, so a node could put ~32 MiB of digits into one log line.
-	huge := "1" + strings.Repeat("0", 1<<20)
+	// Under getblockchaininfo's 1 MiB budget, so the decode path is what runs.
+	huge := "1" + strings.Repeat("0", 512<<10)
 	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"result":{"blocks":` + huge + `},"error":null,"id":"x"}`))
 	})
@@ -208,6 +209,9 @@ func TestDecodeErrorDoesNotEchoNodeData(t *testing.T) {
 	err := New(srv.URL, "", "", srv.Client()).Call(context.Background(), "getblockchaininfo", &out)
 	if err == nil {
 		t.Fatal("expected a decode error for an out-of-range number")
+	}
+	if strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("hit the size budget instead of the decode path: %v", err)
 	}
 	if len(err.Error()) > 200 || strings.Contains(err.Error(), "000000") {
 		t.Fatalf("decode error is %d bytes or echoes the literal: %.120q", len(err.Error()), err.Error())
@@ -275,6 +279,26 @@ func TestPerMethodResponseBudgets(t *testing.T) {
 	for _, m := range []string{"getpeerinfo", "getchaintips"} {
 		if err := c.Call(context.Background(), m, &arr); err != nil && strings.Contains(err.Error(), "exceeds") {
 			t.Errorf("%s: a 2 MiB response must fit its budget, got %v", m, err)
+		}
+	}
+}
+
+func TestBound(t *testing.T) {
+	cases := []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},  // fits: no suffix
+		{"elevenchars", 10, "elevenc..."}, // cut: suffix counted in the cap
+		{"a\nb\x1bc", 10, "a b c"},        // controls become spaces
+		{"ab\u202ecd", 10, "ab cd"},       // bidi override (Cf) becomes a space
+		{"😀😀😀", 10, "😀..."},               // never splits a rune
+	}
+	for _, c := range cases {
+		if got := Bound(c.in, c.max); got != c.want || len(got) > c.max {
+			t.Errorf("Bound(%q, %d) = %q (%d bytes), want %q", c.in, c.max, got, len(got), c.want)
 		}
 	}
 }
