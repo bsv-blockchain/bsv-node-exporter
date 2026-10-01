@@ -28,10 +28,12 @@ The exporter serves `GET /metrics` and `GET /healthz`. `/healthz` never calls th
 | `bsv_headers` | gauge | `getblockchaininfo.headers` |
 | `bsv_difficulty` | gauge | `getblockchaininfo.difficulty` |
 | `bsv_peers{kind}` | gauge | `getpeerinfo`, counted as `inbound` / `outbound` / `p2p` |
-| `bsv_mempool_txs` | gauge | `getmempoolinfo.size`, or `getminingcandidate.num_tx` (which counts the coinbase on SV Node) |
-| `bsv_mempool_bytes` | gauge | `getmempoolinfo.bytes`; not emitted when the source is `miningcandidate` |
+| `bsv_mempool_txs` | gauge | `getmempoolinfo.size`; with `BSV_MEMPOOL_SOURCE=mempoolinfo` |
+| `bsv_mining_candidate_txs` | gauge | `getminingcandidate.num_tx`, coinbase included; with `BSV_MEMPOOL_SOURCE=miningcandidate` |
+| `bsv_mempool_bytes` | gauge | `getmempoolinfo.bytes`; with `BSV_MEMPOOL_SOURCE=mempoolinfo` |
 | `bsv_chaintips{status}` | gauge | `getchaintips`, counted by `status` |
 | `bsv_chaintip_forks{window,length}` | gauge | see below |
+| `bsv_exporter_build_info{version,goversion}` | gauge | always 1 |
 
 A failed call sets `bsv_rpc_up{method}` to 0 and omits that call's series. A scrape takes at most about `BSV_RPC_TIMEOUT`, so as long as that is below the scraper's `scrape_timeout`, one hung call costs only its own series. The rest of the scrape is still served, with HTTP 200. Alert on `bsv_rpc_up == 0` for "node unreachable", and on the scraper's own `up` for "exporter down".
 
@@ -42,7 +44,7 @@ A failed call sets `bsv_rpc_up{method}` to 0 and omits that call's series. A scr
 **Fork buckets.**
 
 - The active height is the highest `height` among tips with status `active`.
-- A fork is a non-`active` tip with `active height − height <= window`, for `window` 144 and 10000. Tips above the active height (headers seen ahead of validation) count too, as in the metrics this replaces.
+- A fork is a non-`active` tip with `0 <= active height − height <= window`, for `window` 144 and 10000. Tips above the active height are headers ahead of validation, not forks, and are not counted (they still count in `bsv_chaintips{status}`).
 - `length="single"` counts tips with `branchlen == 1`.
 - `length="long"` counts tips with `branchlen > 1`.
 

@@ -70,3 +70,20 @@ func TestSummarizeTipsIgnoresZeroBranchLenNonActive(t *testing.T) {
 		t.Errorf("branchlen 0 counted as fork: %+v", got.Forks[144])
 	}
 }
+
+func TestSummarizeTipsIgnoresTipsAboveActive(t *testing.T) {
+	// A node catching up sees headers beyond its validated tip; those are not forks.
+	got := SummarizeTips([]ChainTip{
+		{Height: 100, Status: "active"},
+		{Height: 150, BranchLen: 50, Status: "headers-only"},
+		{Height: 101, BranchLen: 1, Status: "valid-headers"},
+		{Height: 99, BranchLen: 1, Status: "valid-fork"},
+	})
+	want := map[int64]ForkCounts{144: {Single: 1}, 10000: {Single: 1}}
+	if !reflect.DeepEqual(got.Forks, want) {
+		t.Errorf("Forks = %+v, want %+v (tips above the active height must not count)", got.Forks, want)
+	}
+	if got.ByStatus["headers-only"] != 1 || got.ByStatus["valid-headers"] != 1 {
+		t.Errorf("tips above active must still count by status: %v", got.ByStatus)
+	}
+}

@@ -39,17 +39,19 @@ var (
 	descPeers = prometheus.NewDesc("bsv_peers",
 		"Connected peers by kind: inbound or outbound legacy peers, or p2p for Teranode libp2p peers.", []string{"kind"}, nil)
 	descMempoolTxs = prometheus.NewDesc("bsv_mempool_txs",
-		"Transactions in the mempool, from getmempoolinfo.size or getminingcandidate.num_tx.", nil, nil)
+		"Transactions in the mempool, from getmempoolinfo.size.", nil, nil)
+	descCandidateTxs = prometheus.NewDesc("bsv_mining_candidate_txs",
+		"Transactions in the current mining candidate, coinbase included, from getminingcandidate.num_tx.", nil, nil)
 	descMempoolBytes = prometheus.NewDesc("bsv_mempool_bytes",
 		"Mempool size in bytes, from getmempoolinfo.bytes.", nil, nil)
 	descChaintips = prometheus.NewDesc("bsv_chaintips",
 		"Known chain tips by status.", []string{"status"}, nil)
 	descForks = prometheus.NewDesc("bsv_chaintip_forks",
-		"Non-active chain tips with height at least the active height minus window, by branch length (single: 1, long: more than 1).",
+		"Non-active chain tips at most window blocks below the active tip (none above it), by branch length (single: 1, long: more than 1).",
 		[]string{"window", "length"}, nil)
 
 	allDescs = []*prometheus.Desc{descRPCUp, descRPCDuration, descBlocks, descHeaders, descDifficulty,
-		descPeers, descMempoolTxs, descMempoolBytes, descChaintips, descForks}
+		descPeers, descMempoolTxs, descMempoolBytes, descCandidateTxs, descChaintips, descForks}
 )
 
 type task struct {
@@ -193,7 +195,7 @@ func (c *Collector) miningCandidate(ctx context.Context) ([]prometheus.Metric, e
 	if r.NumTx == nil {
 		return nil, errMissingField
 	}
-	return []prometheus.Metric{gauge(descMempoolTxs, *r.NumTx)}, nil
+	return []prometheus.Metric{gauge(descCandidateTxs, *r.NumTx)}, nil
 }
 
 func (c *Collector) chaintips(ctx context.Context) ([]prometheus.Metric, error) {

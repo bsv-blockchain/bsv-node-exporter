@@ -37,8 +37,8 @@ func normalizeStatus(s string) string {
 }
 
 // SummarizeTips counts tips by status, and counts non-active tips with
-// activeHeight-height <= window per window. The bound is inclusive, as in the
-// metrics this replaces. With no active tip every fork bucket is zero.
+// 0 <= activeHeight-height <= window per window. Tips above the active height
+// are excluded. With no active tip every fork bucket is zero.
 func SummarizeTips(tips []ChainTip) TipSummary {
 	s := TipSummary{ByStatus: make(map[string]int, len(Statuses)), Forks: make(map[int64]ForkCounts, len(ForkWindows))}
 	for _, st := range Statuses {
@@ -60,7 +60,8 @@ func SummarizeTips(tips []ChainTip) TipSummary {
 	}
 
 	for _, t := range tips {
-		if t.Status == "active" || t.BranchLen < 1 {
+		// Tips above the active height are headers ahead of validation, not forks.
+		if t.Status == "active" || t.BranchLen < 1 || t.Height > active {
 			continue
 		}
 		for _, w := range ForkWindows {

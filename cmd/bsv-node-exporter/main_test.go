@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -69,7 +70,8 @@ func TestEndToEndSVNode(t *testing.T) {
 	node := fakeNode(t, "../../internal/collector/testdata/svnode", "pw")
 	cfg := load(t, map[string]string{"BSV_RPC_URL": node.URL, "BSV_RPC_USER": "u", "BSV_RPC_PASSWORD": "pw"})
 	out := scrape(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	for _, want := range []string{"bsv_blocks 34346", `bsv_peers{kind="outbound"} 2`, `bsv_rpc_up{method="getchaintips"} 1`} {
+	buildInfo := `bsv_exporter_build_info{goversion="` + runtime.Version() + `",version="dev"} 1`
+	for _, want := range []string{"bsv_blocks 34346", `bsv_peers{kind="outbound"} 2`, `bsv_rpc_up{method="getchaintips"} 1`, buildInfo} {
 		if !strings.Contains(out, want) {
 			t.Errorf("metrics missing %q", want)
 		}

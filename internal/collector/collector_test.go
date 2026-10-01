@@ -49,14 +49,14 @@ func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, ni
 // Everything except bsv_rpc_duration_seconds, whose values vary.
 var stableNames = []string{
 	"bsv_rpc_up", "bsv_blocks", "bsv_headers", "bsv_difficulty", "bsv_peers",
-	"bsv_mempool_txs", "bsv_mempool_bytes", "bsv_chaintips", "bsv_chaintip_forks",
+	"bsv_mempool_txs", "bsv_mempool_bytes", "bsv_mining_candidate_txs", "bsv_chaintips", "bsv_chaintip_forks",
 }
 
 const svnodeExpected = `
 # HELP bsv_blocks Height of the active chain, from getblockchaininfo.
 # TYPE bsv_blocks gauge
 bsv_blocks 34346
-# HELP bsv_chaintip_forks Non-active chain tips with height at least the active height minus window, by branch length (single: 1, long: more than 1).
+# HELP bsv_chaintip_forks Non-active chain tips at most window blocks below the active tip (none above it), by branch length (single: 1, long: more than 1).
 # TYPE bsv_chaintip_forks gauge
 bsv_chaintip_forks{length="long",window="10000"} 1
 bsv_chaintip_forks{length="long",window="144"} 0
@@ -79,7 +79,7 @@ bsv_headers 34346
 # HELP bsv_mempool_bytes Mempool size in bytes, from getmempoolinfo.bytes.
 # TYPE bsv_mempool_bytes gauge
 bsv_mempool_bytes 734211
-# HELP bsv_mempool_txs Transactions in the mempool, from getmempoolinfo.size or getminingcandidate.num_tx.
+# HELP bsv_mempool_txs Transactions in the mempool, from getmempoolinfo.size.
 # TYPE bsv_mempool_txs gauge
 bsv_mempool_txs 1520
 # HELP bsv_peers Connected peers by kind: inbound or outbound legacy peers, or p2p for Teranode libp2p peers.
@@ -108,7 +108,7 @@ const teranodeExpected = `
 # HELP bsv_blocks Height of the active chain, from getblockchaininfo.
 # TYPE bsv_blocks gauge
 bsv_blocks 969139
-# HELP bsv_chaintip_forks Non-active chain tips with height at least the active height minus window, by branch length (single: 1, long: more than 1).
+# HELP bsv_chaintip_forks Non-active chain tips at most window blocks below the active tip (none above it), by branch length (single: 1, long: more than 1).
 # TYPE bsv_chaintip_forks gauge
 bsv_chaintip_forks{length="long",window="10000"} 2
 bsv_chaintip_forks{length="long",window="144"} 0
@@ -128,9 +128,9 @@ bsv_difficulty 2.9549431076597343e+10
 # HELP bsv_headers Number of validated headers, from getblockchaininfo.
 # TYPE bsv_headers gauge
 bsv_headers 969139
-# HELP bsv_mempool_txs Transactions in the mempool, from getmempoolinfo.size or getminingcandidate.num_tx.
-# TYPE bsv_mempool_txs gauge
-bsv_mempool_txs 58
+# HELP bsv_mining_candidate_txs Transactions in the current mining candidate, coinbase included, from getminingcandidate.num_tx.
+# TYPE bsv_mining_candidate_txs gauge
+bsv_mining_candidate_txs 58
 # HELP bsv_peers Connected peers by kind: inbound or outbound legacy peers, or p2p for Teranode libp2p peers.
 # TYPE bsv_peers gauge
 bsv_peers{kind="inbound"} 0
@@ -229,7 +229,7 @@ func TestCollectOnlyEnabled(t *testing.T) {
 		Timeout: time.Second, MempoolSource: config.MempoolSourceMiningCandidate,
 		Enabled: map[string]bool{config.CollectorBlockchain: true, config.CollectorPeers: true},
 	}, discard())
-	if n := testutil.CollectAndCount(c, "bsv_chaintips", "bsv_chaintip_forks", "bsv_mempool_txs"); n != 0 {
+	if n := testutil.CollectAndCount(c, "bsv_chaintips", "bsv_chaintip_forks", "bsv_mempool_txs", "bsv_mining_candidate_txs"); n != 0 {
 		t.Errorf("disabled collectors emitted %d series", n)
 	}
 	if n := testutil.CollectAndCount(c, "bsv_rpc_up"); n != 2 {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -64,7 +65,11 @@ func buildServer(cfg config.Config, logger *slog.Logger) *http.Server {
 		Enabled:       cfg.Collectors,
 	}, logger)
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(coll)
+	reg.MustRegister(coll, prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name:        "bsv_exporter_build_info",
+		Help:        "Always 1; labels carry the exporter version and the Go version it was built with.",
+		ConstLabels: prometheus.Labels{"version": version, "goversion": runtime.Version()},
+	}, func() float64 { return 1 }))
 	return server.New(cfg.ListenAddr, reg, cfg.RPCTimeout+5*time.Second, logger)
 }
 
