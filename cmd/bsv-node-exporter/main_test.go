@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -11,10 +12,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/bsv-blockchain/bsv-node-exporter/internal/collector"
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/config"
+	"github.com/bsv-blockchain/bsv-node-exporter/internal/noderpc"
+	"github.com/bsv-blockchain/bsv-node-exporter/internal/server"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // fakeNode serves fixture results in a JSON-RPC envelope, or 401 when wantPassword
@@ -124,24 +130,96 @@ func TestShutdownGraceCoversAnInFlightScrape(t *testing.T) {
 	}
 }
 
-func TestEndToEndHungNodeBoundsScrape(t *testing.T) {
-	// A node that accepts the request and never answers. Both the per-call context
-	// and the transport's ResponseHeaderTimeout cut it off at BSV_RPC_TIMEOUT; the
-	// 1.2s bound fails if both are lost and only the client's +1s timeout remains.
-	node := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+// hungNode accepts a request and never answers until the client goes away or
+// release is called. Call release before closing anything that waits on it, so a
+// test whose guard is broken fails instead of deadlocking in cleanup.
+func hungNode(t *testing.T) (node *httptest.Server, release func()) {
+	t.Helper()
+	stop := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(stop) }) }
+	node = httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-stop:
+		}
 	}))
-	t.Cleanup(node.Close)
+	t.Cleanup(func() { release(); node.Close() })
+	return node, release
+}
+
+func assertAllDown(t *testing.T, out string) {
+	t.Helper()
+	for _, m := range []string{"getblockchaininfo", "getpeerinfo", "getmempoolinfo", "getchaintips"} {
+		if want := `bsv_rpc_up{method="` + m + `"} 0`; !strings.Contains(out, want) {
+			t.Errorf("metrics missing %q", want)
+		}
+	}
+}
+
+// Guard 1: the per-call context. The HTTP client here has no timeouts at all,
+// so only collector.Options.Timeout can end the call.
+func TestHungNodeBoundedByPerCallContext(t *testing.T) {
+	node, release := hungNode(t)
+	client := noderpc.New(node.URL, "", "", &http.Client{CheckRedirect: noderpc.NoRedirects})
+	coll := collector.New(client, collector.Options{
+		Timeout: 300 * time.Millisecond, MempoolSource: config.MempoolSourceMempoolInfo,
+		Enabled: map[string]bool{config.CollectorBlockchain: true, config.CollectorPeers: true, config.CollectorMempool: true, config.CollectorChaintips: true},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(coll)
+	start := time.Now()
+	ts := httptest.NewServer(server.New(":0", reg, 10*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler)
+	defer ts.Close()
+	defer release() // runs before ts.Close, which would otherwise wait on the hung call
+	// The test's own deadline, so a lost guard fails fast instead of hanging the suite.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/metrics", nil)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request to the test's own httptest server.
+	if err != nil {
+		t.Fatalf("scrape did not finish within 5s with a 300ms per-call timeout: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("scrape took %v with a 300ms per-call timeout and no client timeouts", elapsed)
+	}
+	assertAllDown(t, string(b))
+}
+
+// Guard 2: the transport's ResponseHeaderTimeout, which ends a call to a node
+// that accepted the request but never sent headers, independent of the context.
+func TestRPCTransportBoundsResponseHeaders(t *testing.T) {
+	tr := newRPCHTTPClient(500 * time.Millisecond).Transport.(*http.Transport)
+	if tr.ResponseHeaderTimeout != 500*time.Millisecond {
+		t.Errorf("ResponseHeaderTimeout = %v, want the RPC timeout", tr.ResponseHeaderTimeout)
+	}
+	node, _ := hungNode(t)
+	// The test's own deadline, so a lost guard fails fast instead of hanging the suite.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, node.URL, strings.NewReader("{}"))
+	start := time.Now()
+	resp, err := (&http.Client{Transport: tr}).Do(req) //nolint:gosec // G704: request to the test's own httptest server.
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("expected a timeout from a node that never answers")
+	}
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Fatalf("transport waited %v for headers with a 500ms ResponseHeaderTimeout", elapsed)
+	}
+}
+
+// Both guards together, through buildServer.
+func TestEndToEndHungNodeBoundsScrape(t *testing.T) {
+	node, _ := hungNode(t)
 	cfg := load(t, map[string]string{"BSV_RPC_URL": node.URL, "BSV_RPC_TIMEOUT": "500ms"})
 	start := time.Now()
 	out := scrape(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if elapsed := time.Since(start); elapsed > 1200*time.Millisecond {
 		t.Fatalf("scrape took %v against a hung node with a 500ms RPC timeout", elapsed)
 	}
-	for _, m := range []string{"getblockchaininfo", "getpeerinfo", "getmempoolinfo", "getchaintips"} {
-		if want := `bsv_rpc_up{method="` + m + `"} 0`; !strings.Contains(out, want) {
-			t.Errorf("metrics missing %q", want)
-		}
-	}
+	assertAllDown(t, out)
 }
