@@ -113,7 +113,7 @@ func TestMetricsLimitsConcurrentScrapes(t *testing.T) {
 // countingCollector records how many times a gather reached it.
 type countingCollector struct{ n *int32 }
 
-func (countingCollector) Describe(chan<- *prometheus.Desc) {}
+func (countingCollector) Describe(chan<- *prometheus.Desc)   {}
 func (c countingCollector) Collect(chan<- prometheus.Metric) { atomic.AddInt32(c.n, 1) }
 
 func TestHeadDoesNotScrape(t *testing.T) {
