@@ -1,0 +1,5 @@
+[
+  {"id":1,"addr":"192.0.2.10:18333","inbound":false,"subver":"/Bitcoin SV:1.1.0/","version":70016},
+  {"id":2,"addr":"192.0.2.11:18333","inbound":false,"subver":"/Bitcoin SV:1.1.0/","version":70016},
+  {"id":3,"addr":"198.51.100.7:51234","inbound":true,"subver":"/Bitcoin SV:1.1.0/","version":70016}
+]

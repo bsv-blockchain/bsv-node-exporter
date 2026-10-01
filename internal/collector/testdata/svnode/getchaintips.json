@@ -1,0 +1,6 @@
+[
+  {"height":34346,"hash":"000000002dc457f7ef72cf2811867318d1cbb9dd47f44048959efc7582c6de57","branchlen":0,"status":"active"},
+  {"height":34335,"hash":"000000005abed8ba7910d8d46624cec31e3fdc0d22ee2d8145fee26c4ef816ad","branchlen":1,"status":"valid-fork"},
+  {"height":34320,"hash":"000000004edc86015efd463dad2c9fe69e7105561cb32240dc8695c70836a355","branchlen":1,"status":"valid-fork"},
+  {"height":33663,"hash":"0000000072e069a592e76b97526d339270c8cb75c8e5b3be3da0d8a525066bfd","branchlen":11,"status":"valid-fork"}
+]

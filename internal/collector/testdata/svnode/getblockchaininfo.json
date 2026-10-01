@@ -1,0 +1,1 @@
+{"chain":"teratestnet","blocks":34346,"headers":34346,"bestblockhash":"000000002dc457f7ef72cf2811867318d1cbb9dd47f44048959efc7582c6de57","difficulty":1,"mediantime":1790839039,"verificationprogress":1,"chainwork":"0000000000000000000000000000000000000000000000000004ef80234cfbeb","pruned":false,"softforks":[{"id":"bip34","version":2,"reject":{"status":true}}]}
