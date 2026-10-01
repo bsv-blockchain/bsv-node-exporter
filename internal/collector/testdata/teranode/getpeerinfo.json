@@ -1,0 +1,7 @@
+[
+  {"addr":"192.0.2.20:8333","addrlocal":"198.51.100.5:34606","currentheight":969139,"id":275,"servicesStr":"SFNodeNetwork|SFNodeBitcoinCash","startingheight":969117,"version":70016},
+  {"addr":"192.0.2.21:8333","addrlocal":"198.51.100.5:43994","currentheight":969139,"id":280,"servicesStr":"SFNodeNetwork|SFNodeBitcoinCash","startingheight":969121,"timeoffset":-1,"version":70016},
+  {"addr":"https://peer-a.example.com/api/v1","currentheight":969139,"inbound":true,"peerid":"12D3KooWExamplePeerA000000000000000000000000000000000","startingheight":969139,"subver":"teranode"},
+  {"addr":"https://peer-b.example.com/api/v1","currentheight":969139,"inbound":true,"peerid":"12D3KooWExamplePeerB000000000000000000000000000000000","startingheight":969139,"subver":"teranode"},
+  {"addr":"","currentheight":4798,"inbound":true,"peerid":"12D3KooWExamplePeerC000000000000000000000000000000000","startingheight":4798,"subver":"teranode"}
+]
