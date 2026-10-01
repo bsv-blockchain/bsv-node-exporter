@@ -19,7 +19,9 @@ checksum:
 
 dockers_v2:
   - images: ["ghcr.io/bsv-blockchain/bsv-node-exporter"]
-    tags: ["{{ .Version }}"]
+    # Published as a candidate; the release workflow scans this digest and only
+    # then points the {{ .Version }} tag at it.
+    tags: ["{{ .Version }}-candidate"]
     platforms: [linux/amd64, linux/arm64]
     labels:
       org.opencontainers.image.source: https://github.com/bsv-blockchain/bsv-node-exporter
@@ -30,7 +32,5 @@ release:
   github:
     owner: bsv-blockchain
     name: bsv-node-exporter
-
-# Fixed snapshot version so the release workflow can scan the images before publishing.
-snapshot:
-  version_template: scan
+  # Un-drafted by the release workflow after the image scan passes.
+  draft: true
