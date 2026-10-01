@@ -274,6 +274,8 @@ func TestCollectMalformedArrayElementsAreFailures(t *testing.T) {
 			`[{"height":10,"hash":"a","branchlen":0,"status":"active"},{"height":9,"hash":"b","branchlen":1}]`, "bsv_chaintip_forks"},
 		{"null tip", config.CollectorChaintips, "getchaintips",
 			`[{"height":10,"hash":"a","branchlen":0,"status":"active"},null]`, "bsv_chaintips"},
+		{"object instead of peer array", config.CollectorPeers, "getpeerinfo", `{}`, "bsv_peers"},
+		{"object instead of tip array", config.CollectorChaintips, "getchaintips", `{}`, "bsv_chaintips"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -304,5 +306,32 @@ func TestCollectConcurrentScrapes(t *testing.T) {
 		if n != counts[0] || n == 0 {
 			t.Fatalf("scrape %d returned %d series, scrape 0 returned %d", i, n, counts[0])
 		}
+	}
+}
+
+type panickingCaller struct{ fakeCaller }
+
+func (p panickingCaller) Call(ctx context.Context, method string, out any) error {
+	if method == "getpeerinfo" {
+		panic("boom")
+	}
+	return p.fakeCaller.Call(ctx, method, out)
+}
+
+func TestCollectSurvivesAPanickingCollector(t *testing.T) {
+	// A panic in a worker goroutine bypasses net/http's recovery and kills the process.
+	c := New(panickingCaller{fakeCaller{dir: "testdata/svnode"}}, Options{
+		Timeout: time.Second, MempoolSource: config.MempoolSourceMempoolInfo, Enabled: allEnabled(),
+	}, discard())
+	const want = `
+# HELP bsv_rpc_up Whether the RPC call for this method succeeded during this scrape (1) or failed (0).
+# TYPE bsv_rpc_up gauge
+bsv_rpc_up{method="getblockchaininfo"} 1
+bsv_rpc_up{method="getchaintips"} 1
+bsv_rpc_up{method="getmempoolinfo"} 1
+bsv_rpc_up{method="getpeerinfo"} 0
+`
+	if err := testutil.CollectAndCompare(c, strings.NewReader(want), "bsv_rpc_up"); err != nil {
+		t.Fatal(err)
 	}
 }

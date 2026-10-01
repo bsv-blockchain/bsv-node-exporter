@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -85,5 +86,19 @@ func TestSummarizeTipsIgnoresTipsAboveActive(t *testing.T) {
 	}
 	if got.ByStatus["headers-only"] != 1 || got.ByStatus["valid-headers"] != 1 {
 		t.Errorf("tips above active must still count by status: %v", got.ByStatus)
+	}
+}
+
+func TestSummarizeTipsIgnoresNegativeHeights(t *testing.T) {
+	// active - math.MinInt64 overflows negative, which would pass every window check.
+	got := SummarizeTips([]ChainTip{
+		{Height: 100, Status: "active"},
+		{Height: math.MinInt64, BranchLen: 3, Status: "valid-fork"},
+		{Height: -1, BranchLen: 1, Status: "valid-fork"},
+	})
+	for _, w := range ForkWindows {
+		if got.Forks[w] != (ForkCounts{}) {
+			t.Errorf("window %d = %+v, want zero: negative heights are malformed, not forks", w, got.Forks[w])
+		}
 	}
 }

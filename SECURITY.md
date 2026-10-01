@@ -4,6 +4,8 @@
 
 Report vulnerabilities privately through GitHub's private vulnerability reporting: **Security → Report a vulnerability** on this repository. Do not open a public issue.
 
+Private vulnerability reporting is switched on when the repository becomes public. Until then only its maintainers can see the repository at all; report findings to them directly.
+
 Include the version (`bsv_exporter_build_info`), the configuration involved (without credentials), and steps to reproduce.
 
 ## Supported versions
