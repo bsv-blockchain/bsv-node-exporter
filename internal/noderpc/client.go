@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -180,23 +179,48 @@ func describeDecodeError(err error) string {
 	}
 }
 
-// redact removes the configured credentials from a node-supplied message: a
-// compromised node receives them on every call and could echo them back into
-// our logs. Longest first, so the Basic token goes before its parts.
+// minRedactable is the shortest credential redaction can hide. Anything shorter
+// can occur in any text, including this exporter's own messages.
+const minRedactable = 4
+
+// withheld replaces a node message that contained a configured credential.
+const withheld = "message withheld: it contained a configured credential"
+
+// redact keeps a node-supplied message out of the logs when it contains a
+// configured credential: a compromised node receives them on every call and
+// could echo them back. Nothing is substituted, so the output can neither grow
+// nor reintroduce a credential through the replacement text. Only the part
+// that could reach a log (the capped, sanitised prefix plus room for a
+// credential straddling the cut) is examined.
 func (c *Client) redact(msg string) string {
 	var secrets []string
-	if c.user != "" || c.password != "" {
-		pair := c.user + ":" + c.password
-		secrets = append(secrets, base64.StdEncoding.EncodeToString([]byte(pair)), pair)
-	}
-	for _, s := range []string{c.password, c.user} {
-		if s != "" {
+	longest := 0
+	add := func(s string) {
+		if len(s) >= minRedactable {
 			secrets = append(secrets, s)
+			longest = max(longest, len(s))
 		}
 	}
-	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	if c.user != "" || c.password != "" {
+		pair := c.user + ":" + c.password
+		add(base64.StdEncoding.EncodeToString([]byte(pair)))
+		add(pair)
+	}
+	add(c.password)
+	add(c.user)
+	if len(secrets) == 0 {
+		return msg
+	}
+	window := Bound(msg, maxErrorMessage+longest+len("..."))
 	for _, s := range secrets {
-		msg = strings.ReplaceAll(msg, s, "[redacted]")
+		if strings.Contains(window, s) {
+			for _, s2 := range secrets {
+				if strings.Contains(withheld, s2) {
+					return ""
+				}
+			}
+			return withheld
+		}
 	}
 	return msg
 }

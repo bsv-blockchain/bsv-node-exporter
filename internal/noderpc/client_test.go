@@ -302,3 +302,36 @@ func TestBound(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactionNeverReintroducesOrExpands(t *testing.T) {
+	cases := []struct{ name, user, password, message string }{
+		// "[redacted]" would put a username of "redacted" back into the output.
+		{"credential inside the marker", "redacted", "s3cret-pw", "login failed for redacted"},
+		// Substituting a short credential everywhere multiplies the message.
+		{"dense repeats", "rpcuser", "aaaa", strings.Repeat("a", 1<<20)},
+		// A credential split across the 120-byte cut must not leave a partial copy.
+		{"across the cut", "rpcuser", "s3cret-pw", strings.Repeat("x", maxErrorMessage-4) + "s3cret-pw"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{"result": nil, "id": "x", "error": map[string]any{"code": -1, "message": tc.message}})
+			srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write(body)
+			})
+			err := New(srv.URL, tc.user, tc.password, srv.Client()).Call(context.Background(), "getchaintips", &[]any{})
+			if err == nil {
+				t.Fatal("expected an RPC error")
+			}
+			got := err.Error()
+			for _, secret := range []string{tc.user, tc.password, tc.password[:4]} {
+				if strings.Contains(got, secret) {
+					t.Errorf("error contains %q: %.160q", secret, got)
+				}
+			}
+			if len(got) > 200 {
+				t.Errorf("error is %d bytes", len(got))
+			}
+		})
+	}
+}

@@ -11,7 +11,9 @@ jobs:
   # archives to a draft release. Nothing carries the real version yet.
   build:
     runs-on: ubuntu-latest
-    # Required reviewers on this environment gate every job that holds write credentials.
+    # A manual confirm step before each credentialed job (repo settings: required
+    # reviewers, deployment tags v*). Like the main check above, a tagged commit
+    # can remove it from its own workflow; the tag ruleset is the actual control.
     environment: release
     permissions:
       contents: write
@@ -25,8 +27,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # A release tag must point at reviewed source: a commit already on main.
-      # Checked before any build step or registry login.
+      # Catches a release tag on a commit that isn't on main yet. This runs from
+      # the tagged commit's own workflow, so it is a guard against mistakes, not
+      # against someone who can push tags: that is the v* tag ruleset (admins
+      # only) and who holds write access. Checked before any build or login.
       - name: Tagged commit is on main
         run: |
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
