@@ -153,3 +153,15 @@ func TestLoadRejectsURLQueryAndFragmentWithoutEcho(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRPCTimeoutUpperBound(t *testing.T) {
+	// Deadlines add seconds to this value; anything near time.Duration's max would wrap negative.
+	if _, err := Load(env(map[string]string{"BSV_RPC_URL": "http://rpc:9292", "BSV_RPC_TIMEOUT": MaxRPCTimeout.String()}), noFile); err != nil {
+		t.Errorf("BSV_RPC_TIMEOUT=%v rejected: %v", MaxRPCTimeout, err)
+	}
+	for _, v := range []string{(MaxRPCTimeout + time.Second).String(), "2562047h47m16s"} {
+		if _, err := Load(env(map[string]string{"BSV_RPC_URL": "http://rpc:9292", "BSV_RPC_TIMEOUT": v}), noFile); err == nil {
+			t.Errorf("BSV_RPC_TIMEOUT=%s accepted, want error", v)
+		}
+	}
+}

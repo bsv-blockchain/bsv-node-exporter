@@ -5,6 +5,11 @@
   {"branchlen":1,"hash":"0000000087a123bfe06d65124bfd9cef78ae1679c774666d5d5bb9ea61031967","height":34253,"status":"valid-headers"},
   {"branchlen":1,"hash":"000000002ad131cb8b3c608b9c0588c5f4abfb8a9986e8baa8a93dca3742857e","height":34211,"status":"valid-headers"},
   {"branchlen":1,"hash":"0000000058c51c80c3074e8c0dfda4008ef256c8f5582eb3d4dcab35a1535736","height":34097,"status":"valid-headers"},
+  {"branchlen":1,"hash":"00000000422216d943f3358e4fd0609de3f21a893bafcd1b640fc09a8b69dd96","height":33913,"status":"valid-headers"},
+  {"branchlen":1,"hash":"00000000106a88f203517582615127aaeffdb1b204e7577ce0990d062aa919ff","height":33878,"status":"valid-headers"},
   {"branchlen":11,"hash":"0000000072e069a592e76b97526d339270c8cb75c8e5b3be3da0d8a525066bfd","height":33663,"status":"valid-headers"},
-  {"branchlen":2,"hash":"00000000554d61208cba794eb5dcf1ee40f8a82a4940688e47dd782fe0088805","height":33652,"status":"valid-headers"}
+  {"branchlen":1,"hash":"000000001e8fbd9e0379ced3ed3f9e9df84d02a04a5f12a1606ae2bf33a6af40","height":33657,"status":"valid-headers"},
+  {"branchlen":2,"hash":"00000000554d61208cba794eb5dcf1ee40f8a82a4940688e47dd782fe0088805","height":33652,"status":"valid-headers"},
+  {"branchlen":1,"hash":"000000004606ebfe9beaacdbe3c369044319813b19cc6f3a57746343d2631839","height":33580,"status":"valid-headers"},
+  {"branchlen":1,"hash":"0000000060b98d37153cdb60d33c2cc4eb326ed594da649e403ca272cd4c8011","height":33569,"status":"valid-headers"}
 ]

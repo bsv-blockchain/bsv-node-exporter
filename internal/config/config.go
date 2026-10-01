@@ -22,6 +22,10 @@ const (
 	MempoolSourceMiningCandidate = "miningcandidate"
 )
 
+// MaxRPCTimeout bounds BSV_RPC_TIMEOUT. Server, client and shutdown deadlines
+// add a few seconds to it, so it must stay far from time.Duration's maximum.
+const MaxRPCTimeout = 5 * time.Minute
+
 var allCollectors = []string{CollectorBlockchain, CollectorPeers, CollectorMempool, CollectorChaintips}
 
 // Config is the validated exporter configuration.
@@ -78,8 +82,8 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 
 	if v := getenv("BSV_RPC_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return Config{}, fmt.Errorf("BSV_RPC_TIMEOUT must be a positive duration, got %q", v)
+		if err != nil || d <= 0 || d > MaxRPCTimeout {
+			return Config{}, fmt.Errorf("BSV_RPC_TIMEOUT must be a positive duration up to %v, got %q", MaxRPCTimeout, v)
 		}
 		cfg.RPCTimeout = d
 	}

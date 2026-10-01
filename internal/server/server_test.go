@@ -96,8 +96,9 @@ func TestMetricsLimitsConcurrentScrapes(t *testing.T) {
 	defer ts.Close()
 
 	var wg sync.WaitGroup
-	for range MaxScrapesInFlight {
-		wg.Go(func() { statusOf(t, ts.URL+"/metrics") })
+	inFlight := make([]int, MaxScrapesInFlight)
+	for i := range inFlight {
+		wg.Go(func() { inFlight[i] = statusOf(t, ts.URL+"/metrics") })
 	}
 	for range MaxScrapesInFlight {
 		<-bc.started
@@ -107,6 +108,16 @@ func TestMetricsLimitsConcurrentScrapes(t *testing.T) {
 	wg.Wait()
 	if code != http.StatusServiceUnavailable {
 		t.Fatalf("scrape beyond the in-flight limit = %d, want 503", code)
+	}
+	for i, c := range inFlight {
+		if c != http.StatusOK {
+			t.Errorf("in-flight scrape %d = %d, want 200", i, c)
+		}
+	}
+	// The slots free up once the in-flight scrapes finish. release is closed and
+	// started was drained above, so this Collect returns at once.
+	if c := statusOf(t, ts.URL+"/metrics"); c != http.StatusOK {
+		t.Errorf("scrape after the in-flight ones finished = %d, want 200", c)
 	}
 }
 

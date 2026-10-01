@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -112,7 +113,7 @@ bsv_blocks 969139
 # TYPE bsv_chaintip_forks gauge
 bsv_chaintip_forks{length="long",window="10000"} 2
 bsv_chaintip_forks{length="long",window="144"} 0
-bsv_chaintip_forks{length="single",window="10000"} 5
+bsv_chaintip_forks{length="single",window="10000"} 10
 bsv_chaintip_forks{length="single",window="144"} 4
 # HELP bsv_chaintips Known chain tips by status.
 # TYPE bsv_chaintips gauge
@@ -121,7 +122,7 @@ bsv_chaintips{status="headers-only"} 0
 bsv_chaintips{status="invalid"} 0
 bsv_chaintips{status="other"} 0
 bsv_chaintips{status="valid-fork"} 0
-bsv_chaintips{status="valid-headers"} 7
+bsv_chaintips{status="valid-headers"} 12
 # HELP bsv_difficulty Current proof-of-work difficulty, from getblockchaininfo.
 # TYPE bsv_difficulty gauge
 bsv_difficulty 2.9549431076597343e+10
@@ -285,5 +286,23 @@ func TestCollectMalformedArrayElementsAreFailures(t *testing.T) {
 				t.Error(err)
 			}
 		})
+	}
+}
+
+func TestCollectConcurrentScrapes(t *testing.T) {
+	// The server allows two scrapes at once, so one Collector is gathered concurrently.
+	c := New(fakeCaller{dir: "testdata/svnode"}, Options{
+		Timeout: time.Second, MempoolSource: config.MempoolSourceMempoolInfo, Enabled: allEnabled(),
+	}, discard())
+	var wg sync.WaitGroup
+	counts := make([]int, 8)
+	for i := range counts {
+		wg.Go(func() { counts[i] = testutil.CollectAndCount(c) })
+	}
+	wg.Wait()
+	for i, n := range counts {
+		if n != counts[0] || n == 0 {
+			t.Fatalf("scrape %d returned %d series, scrape 0 returned %d", i, n, counts[0])
+		}
 	}
 }
