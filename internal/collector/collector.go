@@ -4,6 +4,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -99,28 +100,42 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements prometheus.Collector. Calls run concurrently, each under
 // opts.Timeout. A failed call reports bsv_rpc_up 0 and omits its series.
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
+	results := make([][]prometheus.Metric, len(c.tasks))
 	var wg sync.WaitGroup
-	for _, t := range c.tasks {
-		wg.Go(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), c.opts.Timeout)
-			defer cancel()
-			start := time.Now()
-			metrics, err := t.run(ctx)
-			elapsed := time.Since(start).Seconds()
-			up := 1.0
-			if err != nil {
-				up = 0
-				c.logger.Warn("rpc call failed", "method", t.method, "error", err.Error())
-			} else {
-				for _, m := range metrics {
-					ch <- m
-				}
-			}
-			ch <- gauge(descRPCUp, up, t.method)
-			ch <- gauge(descRPCDuration, elapsed, t.method)
-		})
+	for i, t := range c.tasks {
+		wg.Go(func() { results[i] = c.runTask(t) })
 	}
 	wg.Wait()
+	for _, ms := range results {
+		for _, m := range ms {
+			ch <- m
+		}
+	}
+}
+
+// runTask makes one call under the timeout and returns its series plus
+// bsv_rpc_up and bsv_rpc_duration_seconds. A panic counts as a failed call:
+// in a worker goroutine it would bypass net/http's recovery and kill the process.
+func (c *Collector) runTask(t task) []prometheus.Metric {
+	ctx, cancel := context.WithTimeout(context.Background(), c.opts.Timeout)
+	defer cancel()
+	start := time.Now()
+	metrics, err := func() (ms []prometheus.Metric, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				ms, err = nil, fmt.Errorf("collector panicked: %v", r)
+			}
+		}()
+		return t.run(ctx)
+	}()
+	elapsed := time.Since(start).Seconds()
+	up := 1.0
+	if err != nil {
+		up = 0
+		metrics = nil
+		c.logger.Warn("rpc call failed", "method", t.method, "error", err.Error())
+	}
+	return append(metrics, gauge(descRPCUp, up, t.method), gauge(descRPCDuration, elapsed, t.method))
 }
 
 func gauge(d *prometheus.Desc, v float64, labels ...string) prometheus.Metric {

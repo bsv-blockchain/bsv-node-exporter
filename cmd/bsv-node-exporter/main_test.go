@@ -123,3 +123,25 @@ func TestShutdownGraceCoversAnInFlightScrape(t *testing.T) {
 		}
 	}
 }
+
+func TestEndToEndHungNodeBoundsScrape(t *testing.T) {
+	// A node that accepts the request and never answers. Both the per-call context
+	// and the transport's ResponseHeaderTimeout cut it off at BSV_RPC_TIMEOUT; the
+	// 1.2s bound fails if both are lost and only the client's +1s timeout remains.
+	node := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(node.Close)
+	cfg := load(t, map[string]string{"BSV_RPC_URL": node.URL, "BSV_RPC_TIMEOUT": "500ms"})
+	start := time.Now()
+	out := scrape(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if elapsed := time.Since(start); elapsed > 1200*time.Millisecond {
+		t.Fatalf("scrape took %v against a hung node with a 500ms RPC timeout", elapsed)
+	}
+	for _, m := range []string{"getblockchaininfo", "getpeerinfo", "getmempoolinfo", "getchaintips"} {
+		if want := `bsv_rpc_up{method="` + m + `"} 0`; !strings.Contains(out, want) {
+			t.Errorf("metrics missing %q", want)
+		}
+	}
+}
