@@ -51,14 +51,25 @@ func fakeNode(t *testing.T, dir, wantPassword string) *httptest.Server {
 
 func scrape(t *testing.T, cfg config.Config, logger *slog.Logger) string {
 	t.Helper()
+	return scrapeReleasing(t, cfg, logger, func() {})
+}
+
+// scrapeReleasing scrapes with its own 10s deadline and calls release before
+// closing the test server, so a scrape stuck on a fake node fails instead of
+// hanging until the package timeout.
+func scrapeReleasing(t *testing.T, cfg config.Config, logger *slog.Logger, release func()) string {
+	t.Helper()
 	ts := httptest.NewServer(buildServer(cfg, logger).Handler)
 	defer ts.Close()
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/metrics", nil)
+	defer release() // before ts.Close, which waits for in-flight handlers
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/metrics", nil)
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request to the test's own httptest server.
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("scrape did not finish within 10s: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return string(b)
 }
@@ -214,10 +225,10 @@ func TestRPCTransportBoundsResponseHeaders(t *testing.T) {
 
 // Both guards together, through buildServer.
 func TestEndToEndHungNodeBoundsScrape(t *testing.T) {
-	node, _ := hungNode(t)
+	node, release := hungNode(t)
 	cfg := load(t, map[string]string{"BSV_RPC_URL": node.URL, "BSV_RPC_TIMEOUT": "500ms"})
 	start := time.Now()
-	out := scrape(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	out := scrapeReleasing(t, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), release)
 	if elapsed := time.Since(start); elapsed > 1200*time.Millisecond {
 		t.Fatalf("scrape took %v against a hung node with a 500ms RPC timeout", elapsed)
 	}
