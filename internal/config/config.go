@@ -140,7 +140,7 @@ func (c Config) LogValue() slog.Value {
 	}
 	sort.Strings(names)
 	return slog.GroupValue(
-		slog.String("rpc_url", c.RPCURL),
+		slog.String("rpc_endpoint", endpoint(c.RPCURL)),
 		slog.Bool("rpc_user_set", c.RPCUser != ""),
 		slog.Bool("rpc_password_set", c.RPCPassword != ""),
 		slog.Duration("rpc_timeout", c.RPCTimeout),
@@ -148,4 +148,14 @@ func (c Config) LogValue() slog.Value {
 		slog.String("collectors", strings.Join(names, ",")),
 		slog.String("listen_addr", c.ListenAddr),
 	)
+}
+
+// endpoint is the URL's scheme and host only: the path may carry a token, and
+// the URL is logged.
+func endpoint(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"unicode"
@@ -112,6 +113,11 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 
 	resp, err := c.hc.Do(req) //nolint:gosec // G704: the URL is operator configuration (BSV_RPC_URL), never request input.
 	if err != nil {
+		// *url.Error quotes the full request URL, path included; keep only its cause.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return fmt.Errorf("%s: %w", method, err)
 	}
 	defer resp.Body.Close()

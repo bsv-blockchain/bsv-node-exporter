@@ -134,7 +134,7 @@ func TestConfigLogValueRedactsPassword(t *testing.T) {
 	if strings.Contains(out, "s3cret-pw") {
 		t.Fatalf("log line contains password: %s", out)
 	}
-	for _, want := range []string{`"rpc_url":"http://rpc:9292"`, `"rpc_password_set":true`, `"collectors":"blockchain,chaintips,mempool,peers"`} {
+	for _, want := range []string{`"rpc_endpoint":"http://rpc:9292"`, `"rpc_password_set":true`, `"collectors":"blockchain,chaintips,mempool,peers"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log line missing %s: %s", want, out)
 		}
@@ -163,5 +163,22 @@ func TestLoadRPCTimeoutUpperBound(t *testing.T) {
 		if _, err := Load(env(map[string]string{"BSV_RPC_URL": "http://rpc:9292", "BSV_RPC_TIMEOUT": v}), noFile); err == nil {
 			t.Errorf("BSV_RPC_TIMEOUT=%s accepted, want error", v)
 		}
+	}
+}
+
+func TestConfigLogValueOmitsURLPath(t *testing.T) {
+	// Internal security audit, finding 3: a capability token in the URL path
+	// must not reach the startup log.
+	cfg, err := Load(env(map[string]string{"BSV_RPC_URL": "https://rpc.example.com:8332/s3cret-path-token/"}), noFile)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("starting", "config", cfg)
+	if strings.Contains(buf.String(), "s3cret-path-token") {
+		t.Fatalf("log line contains the URL path: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"rpc_endpoint":"https://rpc.example.com:8332"`) {
+		t.Errorf("log line should name scheme and host: %s", buf.String())
 	}
 }

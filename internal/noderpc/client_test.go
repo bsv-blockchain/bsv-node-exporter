@@ -239,3 +239,18 @@ func TestRPCErrorRedactsReflectedCredentials(t *testing.T) {
 		t.Errorf("code must survive redaction: %v", err)
 	}
 }
+
+func TestTransportErrorOmitsURL(t *testing.T) {
+	// Internal security audit, finding 3: *url.Error quotes the request URL,
+	// path included.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL + "/s3cret-path-token/"
+	srv.Close() // nothing listens: the call fails in the transport
+	err := New(url, "", "", &http.Client{}).Call(context.Background(), "getpeerinfo", &[]any{})
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), "s3cret-path-token") {
+		t.Fatalf("transport error contains the URL path: %q", err.Error())
+	}
+}
