@@ -182,3 +182,14 @@ func TestErrorMessageIsBoundedAndSanitised(t *testing.T) {
 		}
 	}
 }
+
+func TestErrorMessageCapCountsMultibyteRunes(t *testing.T) {
+	e := &Error{Code: -1, Message: strings.Repeat("a", maxErrorMessage-1) + "😀😀"}
+	msg := strings.TrimPrefix(e.Error(), "rpc error -1: ")
+	if body := strings.TrimSuffix(msg, "..."); len(body) > maxErrorMessage {
+		t.Errorf("message part is %d bytes, cap is %d: %q", len(body), maxErrorMessage, body)
+	}
+	if !strings.HasSuffix(msg, "...") {
+		t.Errorf("truncated message should end with ...: %q", msg)
+	}
+}

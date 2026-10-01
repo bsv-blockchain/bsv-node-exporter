@@ -77,7 +77,8 @@ jobs:
           image-ref: ${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
           severity: CRITICAL,HIGH
           exit-code: "1"
-          ignore-unfixed: true
+          # Unfixed findings fail too. An accepted risk goes in .trivyignore with a
+          # reason, reviewed like code, not through a blanket filter.
           cache: false
 
   # Only after the scan: point <version> at the scanned digest, attest it, publish.

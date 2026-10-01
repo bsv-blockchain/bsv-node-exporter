@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // MaxResponseBytes bounds how much of a response body is read.
@@ -46,12 +47,13 @@ func (e *Error) Error() string {
 func sanitizeMessage(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		if b.Len() >= maxErrorMessage {
-			b.WriteString("...")
-			break
-		}
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			r = ' '
+		}
+		// Check the encoded size first, so a multibyte rune cannot overrun the cap.
+		if b.Len()+utf8.RuneLen(r) > maxErrorMessage {
+			b.WriteString("...")
+			break
 		}
 		b.WriteRune(r)
 	}
