@@ -17,6 +17,7 @@ jobs:
     outputs:
       version: ${{ steps.candidate.outputs.version }}
       digest: ${{ steps.candidate.outputs.digest }}
+      checksums-sha256: ${{ steps.candidate.outputs.checksums_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,19 +52,28 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           digest=$(docker buildx imagetools inspect "$IMAGE:$version-candidate" --format '{{json .Manifest}}' | jq -r .digest)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          # promote checks the draft's checksums.txt against checksums_sha256 before attesting it.
+          {
+            echo "version=$version"
+            echo "digest=$digest"
+            echo "checksums_sha256=$(sha256sum dist/checksums.txt | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
 
   # Read-only: scans the exact candidate digest for both platforms.
   scan:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: read
     strategy:
       matrix:
         platform: [linux/amd64, linux/arm64]
     steps:
+      # For .trivyignore only.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -79,6 +89,7 @@ jobs:
           exit-code: "1"
           # Unfixed findings fail too. An accepted risk goes in .trivyignore with a
           # reason, reviewed like code, not through a blanket filter.
+          trivyignores: .trivyignore
           cache: false
 
   # Only after the scan: point <version> at the scanned digest, attest it, publish.
@@ -109,7 +120,12 @@ jobs:
           push-to-registry: true
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt --dir dist
+          CHECKSUMS_SHA256: ${{ needs.build.outputs.checksums-sha256 }}
+        # The draft's assets are mutable by anyone with contents:write; only attest
+        # the checksums.txt that build produced.
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt --dir dist
+          echo "$CHECKSUMS_SHA256  dist/checksums.txt" | sha256sum -c -
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/checksums.txt
