@@ -11,7 +11,7 @@ Configuration is read from environment variables only.
 | `BSV_RPC_URL` | required | e.g. `http://rpc:9292`. Must not contain credentials |
 | `BSV_RPC_USER` / `BSV_RPC_PASSWORD` | empty | RPC credentials |
 | `BSV_RPC_PASSWORD_FILE` | empty | Read the password from this file instead; takes precedence over `BSV_RPC_PASSWORD` |
-| `BSV_RPC_TIMEOUT` | `5s` | Timeout for each RPC call. Keep it below the scraper's `scrape_timeout` (default 10s) |
+| `BSV_RPC_TIMEOUT` | `5s` | Timeout for each RPC call, at most `5m`. Keep it below the scraper's `scrape_timeout` (default 10s) |
 | `BSV_MEMPOOL_SOURCE` | `mempoolinfo` | `mempoolinfo` or `miningcandidate`. Teranode needs `miningcandidate`: its `getmempoolinfo` is unimplemented |
 | `BSV_COLLECTORS` | `blockchain,peers,mempool,chaintips` | Comma-separated collectors to enable |
 | `LISTEN_ADDR` | `:9480` | HTTP listen address |
@@ -69,16 +69,21 @@ BSV_COLLECTORS=blockchain,peers,mempool
 
 ### Docker
 
+The container runs as UID 65532, so the password file must be readable by that UID:
+
 ```sh
-docker run --read-only -p 9480:9480 \
+sudo install -d -m 0755 /etc/bsv-node-exporter
+sudo install -m 0400 -o 65532 -g 65532 ./rpc-password /etc/bsv-node-exporter/rpc-password
+
+docker run --read-only -p 127.0.0.1:9480:9480 \
   -e BSV_RPC_URL=http://node:8332 \
   -e BSV_RPC_USER=exporter \
   -e BSV_RPC_PASSWORD_FILE=/run/secrets/rpc-password \
-  -v "$PWD/rpc-password:/run/secrets/rpc-password:ro" \
+  -v /etc/bsv-node-exporter/rpc-password:/run/secrets/rpc-password:ro \
   ghcr.io/bsv-blockchain/bsv-node-exporter:<version>
 ```
 
-The image is distroless, runs as UID 65532 and needs no writable filesystem.
+The image is distroless and needs no writable filesystem. Inside the container the exporter listens on all interfaces (`:9480`) so it can be reached at all; publish the port only where the scraper runs, as `127.0.0.1` does above. `/metrics` has no authentication.
 
 ### systemd
 
@@ -151,7 +156,7 @@ receivers:
 - The only direct dependencies are the Go standard library and `prometheus/client_golang`.
 - CI runs `govulncheck` and `golangci-lint`, and release images are scanned with trivy.
 
-Report vulnerabilities privately through GitHub's private vulnerability reporting on this repository, not in a public issue.
+Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
 ## License
 
