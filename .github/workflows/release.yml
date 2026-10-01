@@ -134,6 +134,8 @@ jobs:
           cd dist
           sha256sum --strict -c checksums.txt
           listed=$(awk '{print $2}' checksums.txt)
+          # dotglob: a dot-prefixed asset must not slip past the check.
+          shopt -s dotglob nullglob
           for f in *; do
             [ "$f" = checksums.txt ] && continue
             if ! grep -qxF -- "$f" <<<"$listed"; then
