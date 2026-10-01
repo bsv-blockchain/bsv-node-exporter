@@ -13,7 +13,7 @@ import (
 
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/collector"
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/config"
-	"github.com/bsv-blockchain/bsv-node-exporter/internal/rpc"
+	"github.com/bsv-blockchain/bsv-node-exporter/internal/noderpc"
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/server"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -58,9 +58,9 @@ func run(logger *slog.Logger) error {
 func buildServer(cfg config.Config, logger *slog.Logger) *http.Server {
 	hc := &http.Client{
 		Timeout:       cfg.RPCTimeout + time.Second,
-		CheckRedirect: rpc.NoRedirects,
+		CheckRedirect: noderpc.NoRedirects,
 	}
-	client := rpc.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPassword, hc)
+	client := noderpc.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPassword, hc)
 	coll := collector.New(client, collector.Options{
 		Timeout:       cfg.RPCTimeout,
 		MempoolSource: cfg.MempoolSource,

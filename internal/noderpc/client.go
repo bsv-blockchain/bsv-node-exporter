@@ -1,6 +1,6 @@
-// Package rpc is a minimal JSON-RPC 1.0 client for SV Node and Teranode,
+// Package noderpc is a minimal JSON-RPC 1.0 client for SV Node and Teranode,
 // restricted to the read-only methods the exporter needs.
-package rpc
+package noderpc
 
 import (
 	"bytes"
@@ -82,7 +82,7 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 		req.SetBasicAuth(c.user, c.password)
 	}
 
-	resp, err := c.hc.Do(req)
+	resp, err := c.hc.Do(req) //nolint:gosec // G704: the URL is operator configuration (BSV_RPC_URL), never request input.
 	if err != nil {
 		return fmt.Errorf("%s: %w", method, err)
 	}

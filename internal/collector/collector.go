@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Caller performs one JSON-RPC call. *rpc.Client implements it.
+// Caller performs one JSON-RPC call. *noderpc.Client implements it.
 type Caller interface {
 	Call(ctx context.Context, method string, out any) error
 }

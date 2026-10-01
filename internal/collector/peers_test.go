@@ -4,9 +4,9 @@ import "testing"
 
 func TestCountPeers(t *testing.T) {
 	got := CountPeers([]Peer{
-		{Inbound: true},                    // legacy inbound
-		{Inbound: false},                   // legacy outbound
-		{},                                 // Teranode legacy peer: inbound omitted means outbound
+		{Inbound: true},                     // legacy inbound
+		{Inbound: false},                    // legacy outbound
+		{},                                  // Teranode legacy peer: inbound omitted means outbound
 		{Inbound: true, PeerID: "12D3KooA"}, // Teranode libp2p peer: inbound means "connected"
 		{PeerID: "12D3KooB"},
 	})
