@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
@@ -133,7 +136,7 @@ func (c *Collector) runTask(t task) []prometheus.Metric {
 	if err != nil {
 		up = 0
 		metrics = nil
-		c.logger.Warn("rpc call failed", "method", t.method, "error", err.Error())
+		c.logger.Warn("rpc call failed", "method", t.method, "error", boundedError(err))
 	}
 	return append(metrics, gauge(descRPCUp, up, t.method), gauge(descRPCDuration, elapsed, t.method))
 }
@@ -141,6 +144,9 @@ func (c *Collector) runTask(t task) []prometheus.Metric {
 func gauge(d *prometheus.Desc, v float64, labels ...string) prometheus.Metric {
 	return prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, labels...)
 }
+
+// maxLoggedError caps every logged call error.
+const maxLoggedError = 300
 
 var (
 	errMissingField     = errors.New("response is missing a required field")
@@ -241,4 +247,21 @@ func (c *Collector) chaintips(ctx context.Context) ([]prometheus.Metric, error) 
 		out = append(out, gauge(descForks, float64(fc.Single), win, "single"), gauge(descForks, float64(fc.Long), win, "long"))
 	}
 	return out, nil
+}
+
+// boundedError renders err for logging with control and format characters
+// replaced and at most maxLoggedError bytes: errors can carry node-derived text.
+func boundedError(err error) string {
+	var b strings.Builder
+	for _, r := range err.Error() {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			r = ' '
+		}
+		if b.Len()+utf8.RuneLen(r) > maxLoggedError {
+			b.WriteString("...")
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

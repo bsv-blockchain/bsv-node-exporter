@@ -2,6 +2,7 @@ package noderpc
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -191,5 +192,50 @@ func TestErrorMessageCapCountsMultibyteRunes(t *testing.T) {
 	}
 	if !strings.HasSuffix(msg, "...") {
 		t.Errorf("truncated message should end with ...: %q", msg)
+	}
+}
+
+func TestDecodeErrorDoesNotEchoNodeData(t *testing.T) {
+	// Internal security audit, finding 2: Go's typed decode error keeps the
+	// offending literal, so a node could put ~32 MiB of digits into one log line.
+	huge := "1" + strings.Repeat("0", 1<<20)
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"blocks":` + huge + `},"error":null,"id":"x"}`))
+	})
+	var out struct {
+		Blocks *float64 `json:"blocks"`
+	}
+	err := New(srv.URL, "", "", srv.Client()).Call(context.Background(), "getblockchaininfo", &out)
+	if err == nil {
+		t.Fatal("expected a decode error for an out-of-range number")
+	}
+	if len(err.Error()) > 200 || strings.Contains(err.Error(), "000000") {
+		t.Fatalf("decode error is %d bytes or echoes the literal: %.120q", len(err.Error()), err.Error())
+	}
+	if !strings.Contains(err.Error(), "getblockchaininfo") {
+		t.Errorf("error should name the method: %q", err.Error())
+	}
+}
+
+func TestRPCErrorRedactsReflectedCredentials(t *testing.T) {
+	// Internal security audit, finding 5: a compromised node receives our Basic
+	// credentials and can echo them in error.message, which we log.
+	token := base64.StdEncoding.EncodeToString([]byte("rpcuser:s3cret-pw"))
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"result":null,"error":{"code":-1,"message":"auth rpcuser s3cret-pw Basic ` + token + `"},"id":"x"}`))
+	})
+	err := New(srv.URL, "rpcuser", "s3cret-pw", srv.Client()).Call(context.Background(), "getpeerinfo", &[]any{})
+	if err == nil {
+		t.Fatal("expected an RPC error")
+	}
+	for _, secret := range []string{"s3cret-pw", token, "rpcuser"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error contains %q: %q", secret, err.Error())
+		}
+	}
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -1 {
+		t.Errorf("code must survive redaction: %v", err)
 	}
 }

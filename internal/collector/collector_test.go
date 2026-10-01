@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -333,5 +334,28 @@ bsv_rpc_up{method="getpeerinfo"} 0
 `
 	if err := testutil.CollectAndCompare(c, strings.NewReader(want), "bsv_rpc_up"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFailedCallLogLineIsBounded(t *testing.T) {
+	// Internal security audit, finding 2 (preventive control): whatever error a
+	// call returns, the logged text has one small cap and no control characters.
+	long := errors.New("x\n\x1b[31m" + strings.Repeat("y", 10000))
+	var buf bytes.Buffer
+	c := New(fakeCaller{errs: map[string]error{"getblockchaininfo": long}}, Options{
+		Timeout: time.Second, Enabled: map[string]bool{config.CollectorBlockchain: true},
+	}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	testutil.CollectAndCount(c)
+	var rec struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("log line: %v: %s", err, buf.String())
+	}
+	if len(rec.Error) > maxLoggedError+3 {
+		t.Errorf("logged error is %d bytes, cap is %d", len(rec.Error), maxLoggedError)
+	}
+	if strings.ContainsAny(rec.Error, "\n\x1b") {
+		t.Errorf("logged error contains control characters: %q", rec.Error[:40])
 	}
 }

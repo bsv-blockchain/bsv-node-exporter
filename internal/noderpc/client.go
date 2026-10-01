@@ -5,11 +5,13 @@ package noderpc
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -130,7 +132,8 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 		return fmt.Errorf("%s: HTTP %d, undecodable response", method, resp.StatusCode)
 	}
 	if r.Error != nil {
-		return fmt.Errorf("%s: HTTP %d: %w", method, resp.StatusCode, r.Error)
+		redacted := &Error{Code: r.Error.Code, Message: c.redact(r.Error.Message)}
+		return fmt.Errorf("%s: HTTP %d: %w", method, resp.StatusCode, redacted)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: HTTP %d", method, resp.StatusCode)
@@ -139,7 +142,44 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 		return fmt.Errorf("%s: empty result", method)
 	}
 	if err := json.Unmarshal(r.Result, out); err != nil {
-		return fmt.Errorf("%s: decoding result: %w", method, err)
+		return fmt.Errorf("%s: %s", method, describeDecodeError(err))
 	}
 	return nil
+}
+
+// describeDecodeError classifies a result decode failure without any node data.
+// json.UnmarshalTypeError carries the offending literal, which the node controls
+// and which can be megabytes long.
+func describeDecodeError(err error) string {
+	var typeErr *json.UnmarshalTypeError
+	var syntaxErr *json.SyntaxError
+	switch {
+	case errors.As(err, &typeErr):
+		return fmt.Sprintf("result has an unexpected or out-of-range value for %s at offset %d", typeErr.Type, typeErr.Offset)
+	case errors.As(err, &syntaxErr):
+		return fmt.Sprintf("result is not valid JSON at offset %d", syntaxErr.Offset)
+	default:
+		return "result does not match the expected shape"
+	}
+}
+
+// redact removes the configured credentials from a node-supplied message: a
+// compromised node receives them on every call and could echo them back into
+// our logs. Longest first, so the Basic token goes before its parts.
+func (c *Client) redact(msg string) string {
+	var secrets []string
+	if c.user != "" || c.password != "" {
+		pair := c.user + ":" + c.password
+		secrets = append(secrets, base64.StdEncoding.EncodeToString([]byte(pair)), pair)
+	}
+	for _, s := range []string{c.password, c.user} {
+		if s != "" {
+			secrets = append(secrets, s)
+		}
+	}
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	for _, s := range secrets {
+		msg = strings.ReplaceAll(msg, s, "[redacted]")
+	}
+	return msg
 }
