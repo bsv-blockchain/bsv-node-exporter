@@ -48,7 +48,7 @@ func scrape(t *testing.T, cfg config.Config, logger *slog.Logger) string {
 	ts := httptest.NewServer(buildServer(cfg, logger).Handler)
 	defer ts.Close()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/metrics", nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request to the test's own httptest server.
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,7 +29,7 @@ func newTestServer(t *testing.T) (*http.Server, *httptest.Server) {
 func get(t *testing.T, method, url string) (int, string) {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(t.Context(), method, url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request to the test's own httptest server.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func (b blockingCollector) Collect(chan<- prometheus.Metric) {
 
 func statusOf(ctxT *testing.T, url string) int {
 	req, _ := http.NewRequestWithContext(ctxT.Context(), http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request to the test's own httptest server.
 	if err != nil {
 		return 0
 	}

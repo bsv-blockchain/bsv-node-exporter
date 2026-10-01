@@ -61,7 +61,8 @@ func SummarizeTips(tips []ChainTip) TipSummary {
 
 	for _, t := range tips {
 		// Tips above the active height are headers ahead of validation, not forks.
-		if t.Status == "active" || t.BranchLen < 1 || t.Height > active {
+		// Negative heights are malformed, and active-height would overflow on them.
+		if t.Status == "active" || t.BranchLen < 1 || t.Height > active || t.Height < 0 {
 			continue
 		}
 		for _, w := range ForkWindows {

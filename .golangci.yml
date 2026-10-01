@@ -6,10 +6,11 @@ linters:
       - std-error-handling
       - common-false-positives
     rules:
-      # Tests read fixtures from computed paths (G304) and use package-level
-      # helpers that predate request contexts.
+      # Tests read fixtures from computed paths. Only G304 is excluded; every
+      # other gosec rule still applies to test code.
       - path: _test\.go
         linters: [gosec]
+        text: G304
   enable:
     - bodyclose
     - errorlint

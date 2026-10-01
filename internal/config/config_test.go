@@ -70,7 +70,7 @@ func TestLoadPasswordFileTakesPrecedence(t *testing.T) {
 		}
 		return []byte("from-file\n"), nil
 	}
-	cfg, err := Load(env(map[string]string{
+	cfg, err := Load(env(map[string]string{ //nolint:gosec // G101: fake credential; the test asserts it never leaks.
 		"BSV_RPC_URL":           "http://rpc:9292",
 		"BSV_RPC_PASSWORD":      "from-env",
 		"BSV_RPC_PASSWORD_FILE": "/run/secrets/rpc",
@@ -105,7 +105,7 @@ func TestLoadErrors(t *testing.T) {
 }
 
 func TestLoadRejectsURLCredentialsWithoutEcho(t *testing.T) {
-	_, err := Load(env(map[string]string{"BSV_RPC_URL": "http://user:s3cret-pw@rpc:9292"}), noFile)
+	_, err := Load(env(map[string]string{"BSV_RPC_URL": "http://user:s3cret-pw@rpc:9292"}), noFile) //nolint:gosec // G101: fake credential; the test asserts it is rejected without echo.
 	if err == nil {
 		t.Fatal("expected error for URL with credentials")
 	}
@@ -113,7 +113,7 @@ func TestLoadRejectsURLCredentialsWithoutEcho(t *testing.T) {
 		t.Fatalf("error echoes credentials: %v", err)
 	}
 	// An unparseable URL must not be echoed either: url.Parse errors quote the input.
-	_, err = Load(env(map[string]string{"BSV_RPC_URL": "http://user:s3cret-pw@rpc:92 92"}), noFile)
+	_, err = Load(env(map[string]string{"BSV_RPC_URL": "http://user:s3cret-pw@rpc:92 92"}), noFile) //nolint:gosec // G101: fake credential; the test asserts it is rejected without echo.
 	if err == nil || strings.Contains(err.Error(), "s3cret-pw") {
 		t.Fatalf("parse error echoes credentials or is nil: %v", err)
 	}
