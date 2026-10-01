@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,5 +63,48 @@ func TestTimeoutsSet(t *testing.T) {
 	}
 	if srv.WriteTimeout != 15*time.Second {
 		t.Errorf("WriteTimeout = %v, want 15s", srv.WriteTimeout)
+	}
+}
+
+// blockingCollector holds every Collect call until release is closed.
+type blockingCollector struct{ started, release chan struct{} }
+
+func (blockingCollector) Describe(chan<- *prometheus.Desc) {}
+
+func (b blockingCollector) Collect(chan<- prometheus.Metric) {
+	b.started <- struct{}{}
+	<-b.release
+}
+
+func statusOf(ctxT *testing.T, url string) int {
+	req, _ := http.NewRequestWithContext(ctxT.Context(), http.MethodGet, url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func TestMetricsLimitsConcurrentScrapes(t *testing.T) {
+	bc := blockingCollector{started: make(chan struct{}, MaxScrapesInFlight), release: make(chan struct{})}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(bc)
+	ts := httptest.NewServer(New(":0", reg, 15*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil))).Handler)
+	defer ts.Close()
+
+	var wg sync.WaitGroup
+	for range MaxScrapesInFlight {
+		wg.Go(func() { statusOf(t, ts.URL+"/metrics") })
+	}
+	for range MaxScrapesInFlight {
+		<-bc.started
+	}
+	code := statusOf(t, ts.URL+"/metrics")
+	close(bc.release)
+	wg.Wait()
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("scrape beyond the in-flight limit = %d, want 503", code)
 	}
 }

@@ -23,7 +23,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RPCURL != "http://rpc:9292" {
 		t.Errorf("RPCURL = %q", cfg.RPCURL)
 	}
-	if cfg.RPCTimeout != 10*time.Second {
+	if cfg.RPCTimeout != 5*time.Second {
 		t.Errorf("RPCTimeout = %v", cfg.RPCTimeout)
 	}
 	if cfg.MempoolSource != MempoolSourceMempoolInfo {

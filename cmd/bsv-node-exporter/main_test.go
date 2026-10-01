@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/config"
 )
@@ -93,5 +94,22 @@ func TestEndToEndNoCredentialsInLogs(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "unauthorized (HTTP 401)") {
 		t.Errorf("auth failure not logged: %s", logs.String())
+	}
+}
+
+func TestRPCHTTPClientIgnoresEnvironmentProxy(t *testing.T) {
+	hc := newRPCHTTPClient(5 * time.Second)
+	tr, ok := hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport = %T, want an explicit *http.Transport (the default one honours HTTP_PROXY)", hc.Transport)
+	}
+	if tr.Proxy != nil {
+		t.Error("Transport.Proxy is set: Basic auth could be sent through an environment proxy")
+	}
+	if hc.CheckRedirect == nil {
+		t.Error("CheckRedirect not set: redirects would be followed")
+	}
+	if hc.Timeout != 6*time.Second {
+		t.Errorf("Timeout = %v, want RPC timeout + 1s", hc.Timeout)
 	}
 }

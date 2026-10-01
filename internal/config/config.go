@@ -41,7 +41,7 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 	cfg := Config{
 		RPCUser:       getenv("BSV_RPC_USER"),
 		RPCPassword:   getenv("BSV_RPC_PASSWORD"),
-		RPCTimeout:    10 * time.Second,
+		RPCTimeout:    5 * time.Second,
 		MempoolSource: MempoolSourceMempoolInfo,
 		ListenAddr:    ":9480",
 	}

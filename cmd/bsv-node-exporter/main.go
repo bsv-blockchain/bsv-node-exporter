@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,11 +57,7 @@ func run(logger *slog.Logger) error {
 }
 
 func buildServer(cfg config.Config, logger *slog.Logger) *http.Server {
-	hc := &http.Client{
-		Timeout:       cfg.RPCTimeout + time.Second,
-		CheckRedirect: noderpc.NoRedirects,
-	}
-	client := noderpc.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPassword, hc)
+	client := noderpc.New(cfg.RPCURL, cfg.RPCUser, cfg.RPCPassword, newRPCHTTPClient(cfg.RPCTimeout))
 	coll := collector.New(client, collector.Options{
 		Timeout:       cfg.RPCTimeout,
 		MempoolSource: cfg.MempoolSource,
@@ -69,4 +66,23 @@ func buildServer(cfg config.Config, logger *slog.Logger) *http.Server {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(coll)
 	return server.New(cfg.ListenAddr, reg, cfg.RPCTimeout+5*time.Second, logger)
+}
+
+// newRPCHTTPClient builds the node RPC client. Its transport has no proxy:
+// http.DefaultTransport honours HTTP_PROXY, which would send the node's Basic
+// auth credentials through whatever proxy the environment names.
+func newRPCHTTPClient(rpcTimeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:       rpcTimeout + time.Second,
+		CheckRedirect: noderpc.NoRedirects,
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: rpcTimeout,
+			MaxIdleConns:          4,
+			MaxConnsPerHost:       8,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
 }
