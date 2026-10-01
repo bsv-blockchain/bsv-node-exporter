@@ -5,11 +5,13 @@ package noderpc
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,7 +116,7 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("%s: building request: %w", method, err)
+		return fmt.Errorf("%s: building request failed", method) // the error quotes the URL
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.user != "" || c.password != "" {
@@ -123,12 +125,7 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 
 	resp, err := c.hc.Do(req) //nolint:gosec // G704: the URL is operator configuration (BSV_RPC_URL), never request input.
 	if err != nil {
-		// *url.Error quotes the full request URL, path included; keep only its cause.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			err = urlErr.Err
-		}
-		return fmt.Errorf("%s: %w", method, err)
+		return fmt.Errorf("%s: %w", method, transportError(err))
 	}
 	defer resp.Body.Close()
 
@@ -137,7 +134,7 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(budget)+1))
 	if err != nil {
-		return fmt.Errorf("%s: reading response: %w", method, err)
+		return fmt.Errorf("%s: reading response: %w", method, transportError(err))
 	}
 	if len(data) > budget {
 		return fmt.Errorf("%s: response exceeds %d bytes", method, budget)
@@ -223,4 +220,42 @@ func (c *Client) redact(msg string) string {
 		}
 	}
 	return msg
+}
+
+// Fixed transport failure categories. net/http errors quote what the node sent
+// (a malformed status line, a Content-Length, chunk framing) and *url.Error
+// quotes the URL, so none of their text is passed on.
+var (
+	ErrTimeout     = errors.New("timed out")
+	ErrConnect     = errors.New("could not connect")
+	ErrTLS         = errors.New("TLS handshake failed")
+	ErrBadResponse = errors.New("malformed or oversized HTTP response")
+	ErrTransport   = errors.New("transport error")
+)
+
+func transportError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return ErrTimeout
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return ErrConnect
+	}
+	var recordErr tls.RecordHeaderError
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &recordErr) || errors.As(err, &certErr) {
+		return ErrTLS
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return ErrBadResponse
+	}
+	return ErrTransport
 }

@@ -234,3 +234,19 @@ func TestEndToEndHungNodeBoundsScrape(t *testing.T) {
 	}
 	assertAllDown(t, out)
 }
+
+func TestRPCTransportBoundsResponseHeaderSize(t *testing.T) {
+	// Review of #4: headers fell outside every response budget (Go's default
+	// allows 10 MiB), so a 9 MiB header on a 1 MiB call allocated ~59 MiB.
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("X-Pad", strings.Repeat("a", 1<<20))
+		_, _ = w.Write([]byte(`{"result":{"blocks":1,"headers":1,"difficulty":1},"error":null,"id":"x"}`))
+	}))
+	t.Cleanup(node.Close)
+	client := noderpc.New(node.URL, "", "", newRPCHTTPClient(5*time.Second))
+	var out map[string]any
+	if err := client.Call(t.Context(), "getblockchaininfo", &out); err == nil {
+		t.Fatal("a 1 MiB response header must be rejected")
+	}
+}

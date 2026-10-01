@@ -85,9 +85,11 @@ func newRPCHTTPClient(rpcTimeout time.Duration) *http.Client {
 			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: rpcTimeout,
-			MaxIdleConns:          4,
-			MaxConnsPerHost:       8,
-			IdleConnTimeout:       90 * time.Second,
+			// Headers are outside the per-method body budgets; Go's default is 10 MiB.
+			MaxResponseHeaderBytes: 64 << 10,
+			MaxIdleConns:           4,
+			MaxConnsPerHost:        8,
+			IdleConnTimeout:        90 * time.Second,
 		},
 	}
 }

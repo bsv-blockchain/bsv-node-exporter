@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -331,6 +332,52 @@ func TestRedactionNeverReintroducesOrExpands(t *testing.T) {
 			}
 			if len(got) > 200 {
 				t.Errorf("error is %d bytes", len(got))
+			}
+		})
+	}
+}
+
+// rawNode answers every connection with resp, verbatim.
+func rawNode(t *testing.T, resp string) string {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 4096)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte(resp))
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String()
+}
+
+func TestTransportErrorsCarryNoNodeBytes(t *testing.T) {
+	// Review of #4: net/http errors quote what the node sent, e.g.
+	// malformed HTTP status code "<password>".
+	cases := map[string]string{
+		"status code":     "HTTP/1.1 s3cret-pw OK\r\n\r\n",
+		"content-length":  "HTTP/1.1 200 OK\r\nContent-Length: s3cret-pw\r\n\r\n",
+		"chunked framing": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ns3cret-pw\r\n",
+	}
+	for name, resp := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := New(rawNode(t, resp), "u", "s3cret-pw", &http.Client{}).Call(t.Context(), "getpeerinfo", &[]any{})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if strings.Contains(err.Error(), "s3cret") {
+				t.Errorf("error quotes node bytes: %q", err.Error())
 			}
 		})
 	}
