@@ -59,6 +59,10 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 	if u.User != nil {
 		return Config{}, errors.New("BSV_RPC_URL must not contain credentials; use BSV_RPC_USER and BSV_RPC_PASSWORD")
 	}
+	// Query strings and fragments often carry tokens, and the URL is logged.
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return Config{}, errors.New("BSV_RPC_URL must not contain a query string or fragment")
+	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return Config{}, errors.New("BSV_RPC_URL must be an http or https URL with a host")
 	}

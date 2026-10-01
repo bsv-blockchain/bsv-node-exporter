@@ -113,3 +113,11 @@ func TestRPCHTTPClientIgnoresEnvironmentProxy(t *testing.T) {
 		t.Errorf("Timeout = %v, want RPC timeout + 1s", hc.Timeout)
 	}
 }
+
+func TestShutdownGraceCoversAnInFlightScrape(t *testing.T) {
+	for _, rpc := range []time.Duration{5 * time.Second, 30 * time.Second} {
+		if got := shutdownGrace(rpc); got != rpc+5*time.Second {
+			t.Errorf("shutdownGrace(%v) = %v, want %v", rpc, got, rpc+5*time.Second)
+		}
+	}
+}

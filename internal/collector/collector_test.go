@@ -249,3 +249,41 @@ func TestCollectLint(t *testing.T) {
 		t.Errorf("lint: %s: %s", p.Metric, p.Text)
 	}
 }
+
+// collectFrom runs one collector against a single hand-written response.
+func collectFrom(t *testing.T, collectorName, method, body string) *Collector {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, method+".json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return New(fakeCaller{dir: dir}, Options{Timeout: time.Second, Enabled: map[string]bool{collectorName: true}}, discard())
+}
+
+func TestCollectMalformedArrayElementsAreFailures(t *testing.T) {
+	cases := []struct {
+		name, collector, method, body, series string
+	}{
+		{"null peer", config.CollectorPeers, "getpeerinfo", `[{"inbound":true},null]`, "bsv_peers"},
+		{"tip without height", config.CollectorChaintips, "getchaintips",
+			`[{"height":10,"hash":"a","branchlen":0,"status":"active"},{"hash":"b","branchlen":1,"status":"valid-fork"}]`, "bsv_chaintip_forks"},
+		{"tip without branchlen", config.CollectorChaintips, "getchaintips",
+			`[{"height":10,"hash":"a","branchlen":0,"status":"active"},{"height":9,"hash":"b","status":"valid-fork"}]`, "bsv_chaintip_forks"},
+		{"tip without status", config.CollectorChaintips, "getchaintips",
+			`[{"height":10,"hash":"a","branchlen":0,"status":"active"},{"height":9,"hash":"b","branchlen":1}]`, "bsv_chaintip_forks"},
+		{"null tip", config.CollectorChaintips, "getchaintips",
+			`[{"height":10,"hash":"a","branchlen":0,"status":"active"},null]`, "bsv_chaintips"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := collectFrom(t, tc.collector, tc.method, tc.body)
+			if n := testutil.CollectAndCount(c, tc.series); n != 0 {
+				t.Errorf("%s emitted %d series from malformed data, want 0", tc.series, n)
+			}
+			want := "\n# HELP bsv_rpc_up Whether the RPC call for this method succeeded during this scrape (1) or failed (0).\n# TYPE bsv_rpc_up gauge\nbsv_rpc_up{method=\"" + tc.method + "\"} 0\n"
+			if err := testutil.CollectAndCompare(c, strings.NewReader(want), "bsv_rpc_up"); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}

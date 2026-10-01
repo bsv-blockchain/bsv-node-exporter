@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"unicode"
 )
 
 // MaxResponseBytes bounds how much of a response body is read.
@@ -32,7 +34,29 @@ type Error struct {
 	Message string `json:"message"`
 }
 
-func (e *Error) Error() string { return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message) }
+// maxErrorMessage bounds how much of a node-supplied message reaches logs.
+const maxErrorMessage = 120
+
+// Error renders the code and a bounded, sanitised prefix of the node's
+// message: enough for "Work queue depth exceeded", not enough to flood logs.
+func (e *Error) Error() string {
+	return fmt.Sprintf("rpc error %d: %s", e.Code, sanitizeMessage(e.Message))
+}
+
+func sanitizeMessage(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if b.Len() >= maxErrorMessage {
+			b.WriteString("...")
+			break
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			r = ' '
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 // NoRedirects is an http.Client CheckRedirect that refuses to follow redirects.
 func NoRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

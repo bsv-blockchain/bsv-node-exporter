@@ -140,3 +140,16 @@ func TestConfigLogValueRedactsPassword(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsURLQueryAndFragmentWithoutEcho(t *testing.T) {
+	for _, u := range []string{"http://rpc:9292/?token=s3cret-tok", "http://rpc:9292/#s3cret-tok", "http://rpc:9292/?"} {
+		_, err := Load(env(map[string]string{"BSV_RPC_URL": u}), noFile)
+		if err == nil {
+			t.Errorf("%q: expected error", u)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cret-tok") {
+			t.Errorf("%q: error echoes the URL: %v", u, err)
+		}
+	}
+}

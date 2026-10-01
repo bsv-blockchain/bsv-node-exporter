@@ -51,7 +51,7 @@ func run(logger *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace(cfg.RPCTimeout))
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }
@@ -86,3 +86,7 @@ func newRPCHTTPClient(rpcTimeout time.Duration) *http.Client {
 		},
 	}
 }
+
+// shutdownGrace is how long Shutdown waits for in-flight scrapes: the same
+// bound as the server's write timeout, so SIGTERM mid-scrape still exits 0.
+func shutdownGrace(rpcTimeout time.Duration) time.Duration { return rpcTimeout + 5*time.Second }

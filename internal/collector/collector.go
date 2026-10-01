@@ -125,7 +125,10 @@ func gauge(d *prometheus.Desc, v float64, labels ...string) prometheus.Metric {
 	return prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, labels...)
 }
 
-var errMissingField = errors.New("response is missing a required field")
+var (
+	errMissingField     = errors.New("response is missing a required field")
+	errMalformedElement = errors.New("response contains a null element or one missing a required field")
+)
 
 func (c *Collector) blockchain(ctx context.Context) ([]prometheus.Metric, error) {
 	var r struct {
@@ -147,9 +150,16 @@ func (c *Collector) blockchain(ctx context.Context) ([]prometheus.Metric, error)
 }
 
 func (c *Collector) peers(ctx context.Context) ([]prometheus.Metric, error) {
-	var peers []Peer
-	if err := c.caller.Call(ctx, "getpeerinfo", &peers); err != nil {
+	var raw []*Peer
+	if err := c.caller.Call(ctx, "getpeerinfo", &raw); err != nil {
 		return nil, err
+	}
+	peers := make([]Peer, 0, len(raw))
+	for _, p := range raw {
+		if p == nil {
+			return nil, errMalformedElement
+		}
+		peers = append(peers, *p)
 	}
 	n := CountPeers(peers)
 	return []prometheus.Metric{
@@ -187,9 +197,21 @@ func (c *Collector) miningCandidate(ctx context.Context) ([]prometheus.Metric, e
 }
 
 func (c *Collector) chaintips(ctx context.Context) ([]prometheus.Metric, error) {
-	var tips []ChainTip
-	if err := c.caller.Call(ctx, "getchaintips", &tips); err != nil {
+	// Pointers so a missing field fails the call instead of decoding as 0.
+	var raw []*struct {
+		Height    *int64  `json:"height"`
+		BranchLen *int64  `json:"branchlen"`
+		Status    *string `json:"status"`
+	}
+	if err := c.caller.Call(ctx, "getchaintips", &raw); err != nil {
 		return nil, err
+	}
+	tips := make([]ChainTip, 0, len(raw))
+	for _, t := range raw {
+		if t == nil || t.Height == nil || t.BranchLen == nil || t.Status == nil {
+			return nil, errMalformedElement
+		}
+		tips = append(tips, ChainTip{Height: *t.Height, BranchLen: *t.BranchLen, Status: *t.Status})
 	}
 	s := SummarizeTips(tips)
 	out := make([]prometheus.Metric, 0, len(Statuses)+2*len(ForkWindows))

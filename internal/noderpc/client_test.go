@@ -166,3 +166,19 @@ func TestCallHonoursContext(t *testing.T) {
 		t.Fatal("call outlived its context")
 	}
 }
+
+func TestErrorMessageIsBoundedAndSanitised(t *testing.T) {
+	e := &Error{Code: -28, Message: "Work queue\n\x1b[31m depth exceeded " + strings.Repeat("x", 5000)}
+	got := e.Error()
+	if len(got) > 200 {
+		t.Errorf("Error() is %d bytes, want <= 200", len(got))
+	}
+	if !strings.HasPrefix(got, "rpc error -28: Work queue") {
+		t.Errorf("Error() = %q, want code and message prefix", got)
+	}
+	for _, r := range got {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("Error() contains control character %q: %q", r, got)
+		}
+	}
+}
