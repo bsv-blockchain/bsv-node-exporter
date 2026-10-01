@@ -7,11 +7,18 @@ permissions:
 env:
   IMAGE: ghcr.io/bsv-blockchain/bsv-node-exporter
 jobs:
-  release:
+  # Build once and publish only as a candidate: images to <version>-candidate,
+  # archives to a draft release. Nothing carries the real version yet.
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+      digest: ${{ steps.candidate.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,6 +30,9 @@ jobs:
           cache: false
       - run: go test ./... -race -count=1
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          syft-version: v1.52.0
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -30,43 +40,72 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Build once. Images go to <version>-candidate and the GitHub release is a
-      # draft; nothing carries the real version until the scan below passes.
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: v2.18.2
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
       - id: candidate
         run: |
           version="${GITHUB_REF_NAME#v}"
           digest=$(docker buildx imagetools inspect "$IMAGE:$version-candidate" --format '{{json .Manifest}}' | jq -r .digest)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  # Read-only: scans the exact candidate digest for both platforms.
+  scan:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
-          TRIVY_PLATFORM: linux/amd64
+          TRIVY_PLATFORM: ${{ matrix.platform }}
         with:
           version: v0.74.0
-          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.digest }}
+          image-ref: ${{ env.IMAGE }}@${{ needs.build.outputs.digest }}
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
-      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_PLATFORM: linux/arm64
+
+  # Only after the scan: point <version> at the scanned digest, attest it, publish.
+  promote:
+    needs: [build, scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          version: v0.74.0
-          image-ref: ${{ env.IMAGE }}@${{ steps.candidate.outputs.digest }}
-          severity: CRITICAL,HIGH
-          exit-code: "1"
-          ignore-unfixed: true
-      # Promote the exact scanned digest, then publish the release.
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - env:
-          DIGEST: ${{ steps.candidate.outputs.digest }}
-          VERSION: ${{ steps.candidate.outputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ needs.build.outputs.digest }}
+          push-to-registry: true
+      - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
