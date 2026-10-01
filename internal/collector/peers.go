@@ -20,14 +20,18 @@ type PeerCounts struct {
 func CountPeers(peers []Peer) PeerCounts {
 	var c PeerCounts
 	for _, p := range peers {
-		switch {
-		case p.PeerID != "":
-			c.P2P++
-		case p.Inbound:
-			c.Inbound++
-		default:
-			c.Outbound++
-		}
+		c.add(p)
 	}
 	return c
+}
+
+func (c *PeerCounts) add(p Peer) {
+	switch {
+	case p.PeerID != "":
+		c.P2P++
+	case p.Inbound:
+		c.Inbound++
+	default:
+		c.Outbound++
+	}
 }

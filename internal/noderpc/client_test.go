@@ -254,3 +254,27 @@ func TestTransportErrorOmitsURL(t *testing.T) {
 		t.Fatalf("transport error contains the URL path: %q", err.Error())
 	}
 }
+
+func TestPerMethodResponseBudgets(t *testing.T) {
+	// Internal security audit, finding 4: object results are small, so their
+	// budget is much tighter than the array results'.
+	pad := strings.Repeat("a", 2<<20)
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"blocks":1,"pad":"` + pad + `"},"error":null,"id":"x"}`))
+	})
+	c := New(srv.URL, "", "", srv.Client())
+	var out struct {
+		Blocks int `json:"blocks"`
+	}
+	for _, m := range []string{"getblockchaininfo", "getmempoolinfo", "getminingcandidate"} {
+		if err := c.Call(context.Background(), m, &out); err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("%s: a 2 MiB response must exceed its budget, got %v", m, err)
+		}
+	}
+	var arr json.RawMessage
+	for _, m := range []string{"getpeerinfo", "getchaintips"} {
+		if err := c.Call(context.Background(), m, &arr); err != nil && strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("%s: a 2 MiB response must fit its budget, got %v", m, err)
+		}
+	}
+}

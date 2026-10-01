@@ -18,18 +18,20 @@ import (
 	"unicode/utf8"
 )
 
-// MaxResponseBytes bounds how much of a response body is read.
-const MaxResponseBytes = 32 << 20
+// MaxResponseBytes is the largest per-method response budget.
+const MaxResponseBytes = 16 << 20
 
 // ErrMethodNotAllowed is returned for methods outside the allowlist.
 var ErrMethodNotAllowed = errors.New("rpc method not allowed")
 
-var allowedMethods = map[string]bool{
-	"getblockchaininfo":  true,
-	"getpeerinfo":        true,
-	"getmempoolinfo":     true,
-	"getminingcandidate": true,
-	"getchaintips":       true,
+// allowedMethods is the allowlist, with each method's response budget in bytes.
+// Object results are small; only the two array results get room to grow.
+var allowedMethods = map[string]int{
+	"getblockchaininfo":  1 << 20,
+	"getmempoolinfo":     1 << 20,
+	"getminingcandidate": 1 << 20,
+	"getpeerinfo":        8 << 20,
+	"getchaintips":       MaxResponseBytes,
 }
 
 // Error is an error returned by the node in the JSON-RPC envelope.
@@ -95,7 +97,8 @@ type response struct {
 // Errors name the method and HTTP status but never include credentials or
 // the response body.
 func (c *Client) Call(ctx context.Context, method string, out any) error {
-	if !allowedMethods[method] {
+	budget, ok := allowedMethods[method]
+	if !ok {
 		return fmt.Errorf("%w: %s", ErrMethodNotAllowed, method)
 	}
 	body, err := json.Marshal(request{JSONRPC: "1.0", ID: "bsv-node-exporter", Method: method, Params: []any{}})
@@ -125,12 +128,12 @@ func (c *Client) Call(ctx context.Context, method string, out any) error {
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("%s: unauthorized (HTTP %d)", method, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(budget)+1))
 	if err != nil {
 		return fmt.Errorf("%s: reading response: %w", method, err)
 	}
-	if len(data) > MaxResponseBytes {
-		return fmt.Errorf("%s: response exceeds %d bytes", method, MaxResponseBytes)
+	if len(data) > budget {
+		return fmt.Errorf("%s: response exceeds %d bytes", method, budget)
 	}
 
 	var r response
