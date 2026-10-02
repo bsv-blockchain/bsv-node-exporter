@@ -44,7 +44,9 @@ func run(logger *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
-	logger.Info("starting", "version", version, "config", cfg)
+	// cfg.LogValue(), not cfg: the struct holds the password, and passing it
+	// whole reads to static analysis (CodeQL go/clear-text-logging) as logging it.
+	logger.Info("starting", "version", version, "config", cfg.LogValue())
 
 	select {
 	case err := <-errCh:
