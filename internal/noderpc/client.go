@@ -209,8 +209,13 @@ func transportError(err error) error {
 		return ErrTimeout
 	}
 	var opErr *net.OpError
-	if errors.As(err, &opErr) && opErr.Op == "dial" {
-		return ErrConnect
+	if errors.As(err, &opErr) {
+		switch opErr.Op {
+		case "dial":
+			return ErrConnect
+		case "remote error": // a TLS alert from the node, e.g. a required client certificate
+			return ErrTLS
+		}
 	}
 	if errors.Is(err, syscall.ECONNRESET) {
 		return ErrConnReset

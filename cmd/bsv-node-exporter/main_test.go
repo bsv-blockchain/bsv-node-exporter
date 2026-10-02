@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -313,4 +314,17 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+func TestRunRoutesStdlibLogFirst(t *testing.T) {
+	// Review of #4: deleting the routeStdlibLog call from run() went unnoticed.
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	defer func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) }()
+	t.Setenv("BSV_RPC_URL", "") // config fails at once, after logging is set up
+	if err := run(slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+		t.Fatal("run should fail without BSV_RPC_URL")
+	}
+	if _, ok := log.Writer().(stdlibSink); !ok {
+		t.Errorf("run() did not route the stdlib logger: writer is %T", log.Writer())
+	}
 }

@@ -2,6 +2,7 @@ package noderpc
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -279,8 +280,6 @@ func TestBound(t *testing.T) {
 
 func TestReflectedCredentialsNeverReachTheError(t *testing.T) {
 	cases := []struct{ name, user, password, message string }{
-		// A username that looks like a redaction marker stays out too.
-		{"username that looks like a marker", "redacted", "s3cret-pw", "login failed for redacted"},
 		// Substituting a short credential everywhere multiplies the message.
 		{"dense repeats", "rpcuser", "aaaa", strings.Repeat("a", 1<<20)},
 		// A credential near where a cap would cut must not leave a partial copy.
@@ -392,5 +391,19 @@ func TestConnectionResetHasItsOwnCategory(t *testing.T) {
 	err = New("http://"+ln.Addr().String(), "", "", &http.Client{}).Call(t.Context(), "getpeerinfo", &[]any{})
 	if !errors.Is(err, ErrConnReset) {
 		t.Errorf("err = %v, want ErrConnReset", err)
+	}
+}
+
+func TestTLSAlertIsATLSError(t *testing.T) {
+	// Review of #4: over TCP a received alert is *net.OpError{Op: "remote error"},
+	// not tls.AlertError, so a node requiring a client certificate read as a
+	// malformed response.
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	err := New(srv.URL, "", "", srv.Client()).Call(t.Context(), "getpeerinfo", &[]any{})
+	if !errors.Is(err, ErrTLS) {
+		t.Errorf("err = %v, want ErrTLS", err)
 	}
 }

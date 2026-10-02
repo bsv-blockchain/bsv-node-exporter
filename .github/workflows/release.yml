@@ -6,7 +6,10 @@ permissions:
   contents: read
 env:
   IMAGE: ghcr.io/bsv-blockchain/bsv-node-exporter
-# One release at a time across all tags; never cancel one half-way through publishing.
+# One release at a time across all tags; never cancel one half-way through
+# publishing. GitHub keeps only one pending run per group, so tags pushed back
+# to back drop the ones in between: push the next tag after the last release
+# has finished.
 concurrency:
   group: release
   cancel-in-progress: false
