@@ -6,9 +6,9 @@ permissions:
   contents: read
 env:
   IMAGE: ghcr.io/bsv-blockchain/bsv-node-exporter
-# One release at a time per tag; never cancel one half-way through publishing.
+# One release at a time across all tags; never cancel one half-way through publishing.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 jobs:
   # Credential-free, and before build: a tag on a commit that isn't on main is

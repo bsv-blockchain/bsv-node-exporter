@@ -195,7 +195,7 @@ func TestDecodeErrorDoesNotEchoNodeData(t *testing.T) {
 	}
 }
 
-func TestRPCErrorRedactsReflectedCredentials(t *testing.T) {
+func TestRPCErrorOmitsReflectedCredentials(t *testing.T) {
 	// Internal security audit, finding 5: a compromised node receives our Basic
 	// credentials and can echo them in error.message, which we log.
 	token := base64.StdEncoding.EncodeToString([]byte("rpcuser:s3cret-pw"))
@@ -214,7 +214,7 @@ func TestRPCErrorRedactsReflectedCredentials(t *testing.T) {
 	}
 	var rpcErr *Error
 	if !errors.As(err, &rpcErr) || rpcErr.Code != -1 {
-		t.Errorf("code must survive redaction: %v", err)
+		t.Errorf("the code must survive: %v", err)
 	}
 }
 
@@ -279,8 +279,8 @@ func TestBound(t *testing.T) {
 
 func TestReflectedCredentialsNeverReachTheError(t *testing.T) {
 	cases := []struct{ name, user, password, message string }{
-		// "[redacted]" would put a username of "redacted" back into the output.
-		{"credential inside the marker", "redacted", "s3cret-pw", "login failed for redacted"},
+		// A username that looks like a redaction marker stays out too.
+		{"username that looks like a marker", "redacted", "s3cret-pw", "login failed for redacted"},
 		// Substituting a short credential everywhere multiplies the message.
 		{"dense repeats", "rpcuser", "aaaa", strings.Repeat("a", 1<<20)},
 		// A credential near where a cap would cut must not leave a partial copy.
@@ -339,9 +339,10 @@ func TestTransportErrorsCarryNoNodeBytes(t *testing.T) {
 	// Review of #4: net/http errors quote what the node sent, e.g.
 	// malformed HTTP status code "<password>".
 	cases := map[string]string{
-		"status code":     "HTTP/1.1 s3cret-pw OK\r\n\r\n",
-		"content-length":  "HTTP/1.1 200 OK\r\nContent-Length: s3cret-pw\r\n\r\n",
-		"chunked framing": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ns3cret-pw\r\n",
+		"status code":    "HTTP/1.1 s3cret-pw OK\r\n\r\n",
+		"content-length": "HTTP/1.1 200 OK\r\nContent-Length: s3cret-pw\r\n\r\n",
+		// Fails in the body read, after the headers: textproto quotes the bad trailer line.
+		"chunked trailer": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\ns3cret-pw-no-colon\r\n\r\n",
 	}
 	for name, resp := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -359,11 +360,37 @@ func TestTransportErrorsCarryNoNodeBytes(t *testing.T) {
 func TestRPCErrorRendersOnlyTheCode(t *testing.T) {
 	// Review of #4: substring withholding is defeated by inserting a single byte
 	// (s3c\x00retpw is logged as "s3c retpw"). The node's message is never rendered.
-	e := &Error{Code: -28, Message: "s3c\x00ret-pw " + strings.Repeat("y", 1<<20)}
-	if got, want := e.Error(), "rpc error -28 (node is warming up)"; got != want {
+	body, _ := json.Marshal(map[string]any{"result": nil, "id": "x", "error": map[string]any{"code": -28, "message": "s3c\x00ret-pw " + strings.Repeat("y", 1<<20)}})
+	var r response
+	if err := json.Unmarshal(body, &r); err != nil || r.Error == nil {
+		t.Fatalf("decoding the envelope: %v", err)
+	}
+	if got, want := r.Error.Error(), "rpc error -28 (node is warming up)"; got != want {
 		t.Errorf("Error() = %.80q, want %q", got, want)
 	}
-	if got, want := (&Error{Code: -12345, Message: "anything"}).Error(), "rpc error -12345"; got != want {
+	if got, want := (&Error{Code: -12345}).Error(), "rpc error -12345"; got != want {
 		t.Errorf("unknown code: Error() = %q, want %q", got, want)
+	}
+}
+
+func TestConnectionResetHasItsOwnCategory(t *testing.T) {
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 4096)
+		_, _ = conn.Read(buf)
+		_ = conn.(*net.TCPConn).SetLinger(0) // close with RST
+		_ = conn.Close()
+	}()
+	err = New("http://"+ln.Addr().String(), "", "", &http.Client{}).Call(t.Context(), "getpeerinfo", &[]any{})
+	if !errors.Is(err, ErrConnReset) {
+		t.Errorf("err = %v, want ErrConnReset", err)
 	}
 }

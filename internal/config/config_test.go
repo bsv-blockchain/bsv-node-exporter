@@ -119,7 +119,7 @@ func TestLoadRejectsURLCredentialsWithoutEcho(t *testing.T) {
 	}
 }
 
-func TestConfigLogValueRedactsPassword(t *testing.T) {
+func TestConfigLogValueOmitsPassword(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
 		"BSV_RPC_URL":      "http://rpc:9292",
 		"BSV_RPC_USER":     "rpcuser",

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -36,8 +37,7 @@ var allowedMethods = map[string]int{
 
 // Error is an error returned by the node in the JSON-RPC envelope.
 type Error struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code int `json:"code"`
 }
 
 // knownCodes describes the common JSON-RPC and bitcoind error codes.
@@ -194,6 +194,7 @@ var (
 	ErrTLS         = errors.New("TLS handshake failed")
 	ErrBadResponse = errors.New("malformed or oversized HTTP response")
 	ErrTransport   = errors.New("transport error")
+	ErrConnReset   = errors.New("connection reset")
 )
 
 func transportError(err error) error {
@@ -211,9 +212,13 @@ func transportError(err error) error {
 	if errors.As(err, &opErr) && opErr.Op == "dial" {
 		return ErrConnect
 	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return ErrConnReset
+	}
 	var recordErr tls.RecordHeaderError
 	var certErr *tls.CertificateVerificationError
-	if errors.As(err, &recordErr) || errors.As(err, &certErr) {
+	var alertErr tls.AlertError
+	if errors.As(err, &recordErr) || errors.As(err, &certErr) || errors.As(err, &alertErr) {
 		return ErrTLS
 	}
 	var urlErr *url.Error
