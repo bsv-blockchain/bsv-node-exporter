@@ -1,0 +1,6 @@
+# Changes to the release pipeline and its supply-chain inputs need a code
+# owner's review (enforced when "Require review from Code Owners" is on).
+/.github/          @oskarszoon
+/.goreleaser.yaml  @oskarszoon
+/.trivyignore      @oskarszoon
+/Dockerfile        @oskarszoon
