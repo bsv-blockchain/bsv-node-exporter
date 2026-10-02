@@ -131,10 +131,12 @@ func TestConfigLogValueOmitsPassword(t *testing.T) {
 	var buf bytes.Buffer
 	slog.New(slog.NewJSONHandler(&buf, nil)).Info("starting", "config", cfg)
 	out := buf.String()
-	if strings.Contains(out, "s3cret-pw") {
-		t.Fatalf("log line contains password: %s", out)
+	// Not even whether a password is set: LogValue must not read RPCPassword at
+	// all (CodeQL go/clear-text-logging follows any value derived from it).
+	if strings.Contains(out, "s3cret-pw") || strings.Contains(out, "password") {
+		t.Fatalf("log line mentions the password: %s", out)
 	}
-	for _, want := range []string{`"rpc_endpoint":"http://rpc:9292"`, `"rpc_password_set":true`, `"collectors":"blockchain,chaintips,mempool,peers"`} {
+	for _, want := range []string{`"rpc_endpoint":"http://rpc:9292"`, `"collectors":"blockchain,chaintips,mempool,peers"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log line missing %s: %s", want, out)
 		}

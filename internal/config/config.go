@@ -142,7 +142,6 @@ func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("rpc_endpoint", endpoint(c.RPCURL)),
 		slog.Bool("rpc_user_set", c.RPCUser != ""),
-		slog.Bool("rpc_password_set", c.RPCPassword != ""),
 		slog.Duration("rpc_timeout", c.RPCTimeout),
 		slog.String("mempool_source", c.MempoolSource),
 		slog.String("collectors", strings.Join(names, ",")),
