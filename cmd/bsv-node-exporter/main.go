@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -31,6 +32,7 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
+	routeStdlibLog(logger)
 	cfg, err := config.Load(os.Getenv, os.ReadFile)
 	if err != nil {
 		return err
@@ -97,3 +99,25 @@ func newRPCHTTPClient(rpcTimeout time.Duration) *http.Client {
 // shutdownGrace is how long Shutdown waits for in-flight scrapes: the same
 // bound as the server's write timeout, so SIGTERM mid-scrape still exits 0.
 func shutdownGrace(rpcTimeout time.Duration) time.Duration { return rpcTimeout + 5*time.Second }
+
+// routeStdlibLog sends the standard log package, which net/http writes to,
+// into one fixed warning. net/http's messages can quote node bytes (e.g.
+// "Unsolicited response received on idle HTTP channel starting with %q"), so
+// their text is dropped. It returns a function that restores the previous
+// output and flags.
+func routeStdlibLog(logger *slog.Logger) (restore func()) {
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(stdlibSink{logger})
+	return func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	}
+}
+
+type stdlibSink struct{ logger *slog.Logger }
+
+func (s stdlibSink) Write(p []byte) (int, error) {
+	s.logger.Warn("net/http logged a message; its text is withheld because it can contain node data")
+	return len(p), nil
+}

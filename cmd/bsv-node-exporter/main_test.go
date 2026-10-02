@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -249,4 +251,66 @@ func TestRPCTransportBoundsResponseHeaderSize(t *testing.T) {
 	if err := client.Call(t.Context(), "getblockchaininfo", &out); err == nil {
 		t.Fatal("a 1 MiB response header must be rejected")
 	}
+}
+
+func TestStdlibLogNeverCarriesNodeBytes(t *testing.T) {
+	// Review of #4: net/http writes through the standard log package, e.g.
+	// "Unsolicited response received on idle HTTP channel starting with %q",
+	// quoting up to ~4 KiB the node sent after a valid response.
+	var logs lockedBuffer // net/http logs from its own goroutine
+	restore := routeStdlibLog(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer restore()
+
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		_, _ = conn.Read(buf)
+		body := `{"result":{"blocks":1,"headers":1,"difficulty":1},"error":null,"id":"x"}`
+		_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+		time.Sleep(200 * time.Millisecond) // the connection is idle in the pool now
+		_, _ = conn.Write([]byte("s3cret-pw trailing bytes"))
+		time.Sleep(300 * time.Millisecond)
+	}()
+
+	client := noderpc.New("http://"+ln.Addr().String(), "u", "s3cret-pw", newRPCHTTPClient(5*time.Second))
+	var out map[string]any
+	if err := client.Call(t.Context(), "getblockchaininfo", &out); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline) && !strings.Contains(logs.String(), "net/http logged"); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if strings.Contains(logs.String(), "s3cret") {
+		t.Fatalf("log output carries node bytes: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "net/http logged a message") {
+		t.Errorf("expected one fixed warning in place of net/http's message, got: %q", logs.String())
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for concurrent writers and readers.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
