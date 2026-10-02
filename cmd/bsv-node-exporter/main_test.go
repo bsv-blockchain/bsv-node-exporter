@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -233,4 +236,95 @@ func TestEndToEndHungNodeBoundsScrape(t *testing.T) {
 		t.Fatalf("scrape took %v against a hung node with a 500ms RPC timeout", elapsed)
 	}
 	assertAllDown(t, out)
+}
+
+func TestRPCTransportBoundsResponseHeaderSize(t *testing.T) {
+	// Review of #4: headers fell outside every response budget (Go's default
+	// allows 10 MiB), so a 9 MiB header on a 1 MiB call allocated ~59 MiB.
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("X-Pad", strings.Repeat("a", 1<<20))
+		_, _ = w.Write([]byte(`{"result":{"blocks":1,"headers":1,"difficulty":1},"error":null,"id":"x"}`))
+	}))
+	t.Cleanup(node.Close)
+	client := noderpc.New(node.URL, "", "", newRPCHTTPClient(5*time.Second))
+	var out map[string]any
+	if err := client.Call(t.Context(), "getblockchaininfo", &out); err == nil {
+		t.Fatal("a 1 MiB response header must be rejected")
+	}
+}
+
+func TestStdlibLogNeverCarriesNodeBytes(t *testing.T) {
+	// Review of #4: net/http writes through the standard log package, e.g.
+	// "Unsolicited response received on idle HTTP channel starting with %q",
+	// quoting up to ~4 KiB the node sent after a valid response.
+	var logs lockedBuffer // net/http logs from its own goroutine
+	restore := routeStdlibLog(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer restore()
+
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		_, _ = conn.Read(buf)
+		body := `{"result":{"blocks":1,"headers":1,"difficulty":1},"error":null,"id":"x"}`
+		_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
+		time.Sleep(200 * time.Millisecond) // the connection is idle in the pool now
+		_, _ = conn.Write([]byte("s3cret-pw trailing bytes"))
+		time.Sleep(300 * time.Millisecond)
+	}()
+
+	client := noderpc.New("http://"+ln.Addr().String(), "u", "s3cret-pw", newRPCHTTPClient(5*time.Second))
+	var out map[string]any
+	if err := client.Call(t.Context(), "getblockchaininfo", &out); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline) && !strings.Contains(logs.String(), "net/http logged"); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if strings.Contains(logs.String(), "s3cret") {
+		t.Fatalf("log output carries node bytes: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "net/http logged a message") {
+		t.Errorf("expected one fixed warning in place of net/http's message, got: %q", logs.String())
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for concurrent writers and readers.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestRunRoutesStdlibLogFirst(t *testing.T) {
+	// Review of #4: deleting the routeStdlibLog call from run() went unnoticed.
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	defer func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) }()
+	t.Setenv("BSV_RPC_URL", "") // config fails at once, after logging is set up
+	if err := run(slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+		t.Fatal("run should fail without BSV_RPC_URL")
+	}
+	if _, ok := log.Writer().(stdlibSink); !ok {
+		t.Errorf("run() did not route the stdlib logger: writer is %T", log.Writer())
+	}
 }

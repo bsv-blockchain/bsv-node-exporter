@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -333,5 +335,98 @@ bsv_rpc_up{method="getpeerinfo"} 0
 `
 	if err := testutil.CollectAndCompare(c, strings.NewReader(want), "bsv_rpc_up"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFailedCallLogLineIsBounded(t *testing.T) {
+	// Internal security audit, finding 2 (preventive control): whatever error a
+	// call returns, the logged text has one small cap and no control characters.
+	long := errors.New("x\n\x1b[31m" + strings.Repeat("y", 10000))
+	var buf bytes.Buffer
+	c := New(fakeCaller{errs: map[string]error{"getblockchaininfo": long}}, Options{
+		Timeout: time.Second, Enabled: map[string]bool{config.CollectorBlockchain: true},
+	}, slog.New(slog.NewJSONHandler(&buf, nil)))
+	testutil.CollectAndCount(c)
+	var rec struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("log line: %v: %s", err, buf.String())
+	}
+	if len(rec.Error) > maxLoggedError {
+		t.Errorf("logged error is %d bytes, cap is %d", len(rec.Error), maxLoggedError)
+	}
+	if strings.ContainsAny(rec.Error, "\n\x1b") {
+		t.Errorf("logged error contains control characters: %q", rec.Error[:40])
+	}
+}
+
+// allocatedDuring reports the bytes allocated while f runs.
+func allocatedDuring(f func()) uint64 {
+	runtime.GC()
+	var a, b runtime.MemStats
+	runtime.ReadMemStats(&a)
+	f()
+	runtime.ReadMemStats(&b)
+	return b.TotalAlloc - a.TotalAlloc
+}
+
+func TestDenseArraysAreRejectedWithoutAmplification(t *testing.T) {
+	// Internal security audit, finding 4: millions of tiny elements under the
+	// byte budget decoded into hundreds of MiB (5.7 MiB of peers -> 181.6 MiB).
+	cases := []struct {
+		name, collector, method, elem string
+		n                             int
+		maxAlloc                      uint64
+	}{
+		// Baseline for both: the fake reads the file and copies it once (2x body).
+		{"peers", config.CollectorPeers, "getpeerinfo", `{}`, 2_000_000, 24 << 20},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "[" + strings.TrimSuffix(strings.Repeat(tc.elem+",", tc.n), ",") + "]"
+			c := collectFrom(t, tc.collector, tc.method, body)
+			var up int
+			alloc := allocatedDuring(func() { up = testutil.CollectAndCount(c, "bsv_rpc_up") })
+			if up != 1 {
+				t.Fatalf("bsv_rpc_up series = %d", up)
+			}
+			want := "\n# HELP bsv_rpc_up Whether the RPC call for this method succeeded during this scrape (1) or failed (0).\n# TYPE bsv_rpc_up gauge\nbsv_rpc_up{method=\"" + tc.method + "\"} 0\n"
+			if err := testutil.CollectAndCompare(c, strings.NewReader(want), "bsv_rpc_up"); err != nil {
+				t.Errorf("an array over the element cap must fail the call: %v", err)
+			}
+			if alloc > tc.maxAlloc {
+				t.Errorf("allocated %.1f MiB for a %.1f MiB body, ceiling %.1f MiB", float64(alloc)/(1<<20), float64(len(body))/(1<<20), float64(tc.maxAlloc)/(1<<20))
+			}
+		})
+	}
+}
+
+func TestArraysAtTheCapAreAccepted(t *testing.T) {
+	c := collectFrom(t, config.CollectorPeers, "getpeerinfo", "["+strings.TrimSuffix(strings.Repeat(`{},`, MaxPeers), ",")+"]")
+	if n := testutil.CollectAndCount(c, "bsv_peers"); n != 3 {
+		t.Errorf("exactly MaxPeers peers must be accepted, got %d bsv_peers series", n)
+	}
+}
+
+func TestChainTipDecodeCostStopsAtTheCap(t *testing.T) {
+	// Internal security audit, finding 4: past MaxChainTips, a larger array must
+	// not cost more to process. Measured as allocation minus the fake caller's
+	// own two copies of the body.
+	elem := `{"height":1,"branchlen":1,"status":"valid-fork"}`
+	cost := func(n int) (float64, bool) {
+		body := "[" + strings.TrimSuffix(strings.Repeat(elem+",", n), ",") + "]"
+		c := collectFrom(t, config.CollectorChaintips, "getchaintips", body)
+		var forks int
+		alloc := allocatedDuring(func() { forks = testutil.CollectAndCount(c, "bsv_chaintip_forks") })
+		return (float64(alloc) - 2*float64(len(body))) / (1 << 20), forks == 0
+	}
+	small, rejectedSmall := cost(2 * MaxChainTips)
+	large, rejectedLarge := cost(4 * MaxChainTips)
+	if !rejectedSmall || !rejectedLarge {
+		t.Fatal("arrays over MaxChainTips must fail the call")
+	}
+	if large-small > 6 {
+		t.Errorf("decode cost grew from %.1f to %.1f MiB when the array doubled past the cap", small, large)
 	}
 }

@@ -13,21 +13,17 @@ type PeerCounts struct {
 	P2P      int
 }
 
-// CountPeers classifies peers. A non-empty PeerID marks a Teranode libp2p
+// add classifies one peer. A non-empty PeerID marks a Teranode libp2p
 // peer, whose inbound flag means "connected" rather than direction, so it
 // counts as P2P. Other peers count by their inbound flag; Teranode omits
 // inbound=false, so a missing flag counts as outbound.
-func CountPeers(peers []Peer) PeerCounts {
-	var c PeerCounts
-	for _, p := range peers {
-		switch {
-		case p.PeerID != "":
-			c.P2P++
-		case p.Inbound:
-			c.Inbound++
-		default:
-			c.Outbound++
-		}
+func (c *PeerCounts) add(p Peer) {
+	switch {
+	case p.PeerID != "":
+		c.P2P++
+	case p.Inbound:
+		c.Inbound++
+	default:
+		c.Outbound++
 	}
-	return c
 }

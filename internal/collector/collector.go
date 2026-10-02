@@ -2,7 +2,9 @@
 package collector
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bsv-blockchain/bsv-node-exporter/internal/config"
+	"github.com/bsv-blockchain/bsv-node-exporter/internal/noderpc"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -133,7 +136,7 @@ func (c *Collector) runTask(t task) []prometheus.Metric {
 	if err != nil {
 		up = 0
 		metrics = nil
-		c.logger.Warn("rpc call failed", "method", t.method, "error", err.Error())
+		c.logger.Warn("rpc call failed", "method", t.method, "error", boundedError(err))
 	}
 	return append(metrics, gauge(descRPCUp, up, t.method), gauge(descRPCDuration, elapsed, t.method))
 }
@@ -141,6 +144,16 @@ func (c *Collector) runTask(t task) []prometheus.Metric {
 func gauge(d *prometheus.Desc, v float64, labels ...string) prometheus.Metric {
 	return prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, labels...)
 }
+
+// Element caps for array results, checked while streaming. Far above real nodes;
+// they bound what a malicious node can make the exporter allocate.
+const (
+	MaxPeers     = 10_000
+	MaxChainTips = 100_000
+)
+
+// maxLoggedError caps every logged call error.
+const maxLoggedError = 300
 
 var (
 	errMissingField     = errors.New("response is missing a required field")
@@ -167,18 +180,22 @@ func (c *Collector) blockchain(ctx context.Context) ([]prometheus.Metric, error)
 }
 
 func (c *Collector) peers(ctx context.Context) ([]prometheus.Metric, error) {
-	var raw []*Peer
+	var raw json.RawMessage
 	if err := c.caller.Call(ctx, "getpeerinfo", &raw); err != nil {
 		return nil, err
 	}
-	peers := make([]Peer, 0, len(raw))
-	for _, p := range raw {
-		if p == nil {
-			return nil, errMalformedElement
+	var n PeerCounts
+	err := streamArray(raw, MaxPeers, func(dec *json.Decoder) error {
+		var p *Peer
+		if err := dec.Decode(&p); err != nil || p == nil {
+			return errMalformedElement
 		}
-		peers = append(peers, *p)
+		n.add(*p)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	n := CountPeers(peers)
 	return []prometheus.Metric{
 		gauge(descPeers, float64(n.Inbound), "inbound"),
 		gauge(descPeers, float64(n.Outbound), "outbound"),
@@ -214,21 +231,26 @@ func (c *Collector) miningCandidate(ctx context.Context) ([]prometheus.Metric, e
 }
 
 func (c *Collector) chaintips(ctx context.Context) ([]prometheus.Metric, error) {
-	// Pointers so a missing field fails the call instead of decoding as 0.
-	var raw []*struct {
-		Height    *int64  `json:"height"`
-		BranchLen *int64  `json:"branchlen"`
-		Status    *string `json:"status"`
-	}
+	var raw json.RawMessage
 	if err := c.caller.Call(ctx, "getchaintips", &raw); err != nil {
 		return nil, err
 	}
-	tips := make([]ChainTip, 0, len(raw))
-	for _, t := range raw {
-		if t == nil || t.Height == nil || t.BranchLen == nil || t.Status == nil {
-			return nil, errMalformedElement
+	var tips []ChainTip
+	err := streamArray(raw, MaxChainTips, func(dec *json.Decoder) error {
+		// Pointers so a missing field fails the call instead of decoding as 0.
+		var t *struct {
+			Height    *int64  `json:"height"`
+			BranchLen *int64  `json:"branchlen"`
+			Status    *string `json:"status"`
 		}
-		tips = append(tips, ChainTip{Height: *t.Height, BranchLen: *t.BranchLen, Status: *t.Status})
+		if err := dec.Decode(&t); err != nil || t == nil || t.Height == nil || t.BranchLen == nil || t.Status == nil {
+			return errMalformedElement
+		}
+		tips = append(tips, ChainTip{Height: *t.Height, BranchLen: *t.BranchLen, Status: normalizeStatus(*t.Status)})
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	s := SummarizeTips(tips)
 	out := make([]prometheus.Metric, 0, len(Statuses)+2*len(ForkWindows))
@@ -241,4 +263,35 @@ func (c *Collector) chaintips(ctx context.Context) ([]prometheus.Metric, error) 
 		out = append(out, gauge(descForks, float64(fc.Single), win, "single"), gauge(descForks, float64(fc.Long), win, "long"))
 	}
 	return out, nil
+}
+
+// boundedError renders err for logging with control and format characters
+// replaced and at most maxLoggedError bytes: errors can carry node-derived text.
+func boundedError(err error) string { return noderpc.Bound(err.Error(), maxLoggedError) }
+
+var (
+	errNotArray        = errors.New("result is not an array")
+	errTooManyElements = errors.New("result has more elements than allowed")
+)
+
+// streamArray decodes a JSON array one element at a time, calling each for every
+// element, and fails as soon as it holds more than limit elements. Elements are
+// never collected into a slice here, so a dense array cannot amplify memory.
+func streamArray(raw []byte, limit int, each func(*json.Decoder) error) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('[') {
+		return errNotArray
+	}
+	for n := 0; dec.More(); n++ {
+		if n == limit {
+			return errTooManyElements
+		}
+		if err := each(dec); err != nil {
+			return err
+		}
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim(']') {
+		return errMalformedElement
+	}
+	return nil
 }

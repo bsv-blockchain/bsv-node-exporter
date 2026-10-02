@@ -2,9 +2,12 @@ package noderpc
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -167,29 +170,240 @@ func TestCallHonoursContext(t *testing.T) {
 	}
 }
 
-func TestErrorMessageIsBoundedAndSanitised(t *testing.T) {
-	e := &Error{Code: -28, Message: "Work queue\n\x1b[31m depth exceeded " + strings.Repeat("x", 5000)}
-	got := e.Error()
-	if len(got) > 200 {
-		t.Errorf("Error() is %d bytes, want <= 200", len(got))
+func TestDecodeErrorDoesNotEchoNodeData(t *testing.T) {
+	// Internal security audit, finding 2: Go's typed decode error keeps the
+	// offending literal, so a node could put ~32 MiB of digits into one log line.
+	// Under getblockchaininfo's 1 MiB budget, so the decode path is what runs.
+	huge := "1" + strings.Repeat("0", 512<<10)
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"blocks":` + huge + `},"error":null,"id":"x"}`))
+	})
+	var out struct {
+		Blocks *float64 `json:"blocks"`
 	}
-	if !strings.HasPrefix(got, "rpc error -28: Work queue") {
-		t.Errorf("Error() = %q, want code and message prefix", got)
+	err := New(srv.URL, "", "", srv.Client()).Call(context.Background(), "getblockchaininfo", &out)
+	if err == nil {
+		t.Fatal("expected a decode error for an out-of-range number")
 	}
-	for _, r := range got {
-		if r < 0x20 || r == 0x7f {
-			t.Fatalf("Error() contains control character %q: %q", r, got)
+	if strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("hit the size budget instead of the decode path: %v", err)
+	}
+	if len(err.Error()) > 200 || strings.Contains(err.Error(), "000000") {
+		t.Fatalf("decode error is %d bytes or echoes the literal: %.120q", len(err.Error()), err.Error())
+	}
+	if !strings.Contains(err.Error(), "getblockchaininfo") {
+		t.Errorf("error should name the method: %q", err.Error())
+	}
+}
+
+func TestRPCErrorOmitsReflectedCredentials(t *testing.T) {
+	// Internal security audit, finding 5: a compromised node receives our Basic
+	// credentials and can echo them in error.message, which we log.
+	token := base64.StdEncoding.EncodeToString([]byte("rpcuser:s3cret-pw"))
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"result":null,"error":{"code":-1,"message":"auth rpcuser s3cret-pw Basic ` + token + `"},"id":"x"}`))
+	})
+	err := New(srv.URL, "rpcuser", "s3cret-pw", srv.Client()).Call(context.Background(), "getpeerinfo", &[]any{})
+	if err == nil {
+		t.Fatal("expected an RPC error")
+	}
+	for _, secret := range []string{"s3cret-pw", token, "rpcuser"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error contains %q: %q", secret, err.Error())
+		}
+	}
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -1 {
+		t.Errorf("the code must survive: %v", err)
+	}
+}
+
+func TestTransportErrorOmitsURL(t *testing.T) {
+	// Internal security audit, finding 3: *url.Error quotes the request URL,
+	// path included.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL + "/s3cret-path-token/"
+	srv.Close() // nothing listens: the call fails in the transport
+	err := New(url, "", "", &http.Client{}).Call(context.Background(), "getpeerinfo", &[]any{})
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), "s3cret-path-token") {
+		t.Fatalf("transport error contains the URL path: %q", err.Error())
+	}
+}
+
+func TestPerMethodResponseBudgets(t *testing.T) {
+	// Internal security audit, finding 4: object results are small, so their
+	// budget is much tighter than the array results'.
+	pad := strings.Repeat("a", 2<<20)
+	srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"blocks":1,"pad":"` + pad + `"},"error":null,"id":"x"}`))
+	})
+	c := New(srv.URL, "", "", srv.Client())
+	var out struct {
+		Blocks int `json:"blocks"`
+	}
+	for _, m := range []string{"getblockchaininfo", "getmempoolinfo", "getminingcandidate"} {
+		if err := c.Call(context.Background(), m, &out); err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("%s: a 2 MiB response must exceed its budget, got %v", m, err)
+		}
+	}
+	var arr json.RawMessage
+	for _, m := range []string{"getpeerinfo", "getchaintips"} {
+		if err := c.Call(context.Background(), m, &arr); err != nil && strings.Contains(err.Error(), "exceeds") {
+			t.Errorf("%s: a 2 MiB response must fit its budget, got %v", m, err)
 		}
 	}
 }
 
-func TestErrorMessageCapCountsMultibyteRunes(t *testing.T) {
-	e := &Error{Code: -1, Message: strings.Repeat("a", maxErrorMessage-1) + "😀😀"}
-	msg := strings.TrimPrefix(e.Error(), "rpc error -1: ")
-	if body := strings.TrimSuffix(msg, "..."); len(body) > maxErrorMessage {
-		t.Errorf("message part is %d bytes, cap is %d: %q", len(body), maxErrorMessage, body)
+func TestBound(t *testing.T) {
+	cases := []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"short", 10, "short"},
+		{"exactly10!", 10, "exactly10!"},  // fits: no suffix
+		{"elevenchars", 10, "elevenc..."}, // cut: suffix counted in the cap
+		{"a\nb\x1bc", 10, "a b c"},        // controls become spaces
+		{"ab\u202ecd", 10, "ab cd"},       // bidi override (Cf) becomes a space
+		{"😀😀😀", 10, "😀..."},               // never splits a rune
 	}
-	if !strings.HasSuffix(msg, "...") {
-		t.Errorf("truncated message should end with ...: %q", msg)
+	for _, c := range cases {
+		if got := Bound(c.in, c.max); got != c.want || len(got) > c.max {
+			t.Errorf("Bound(%q, %d) = %q (%d bytes), want %q", c.in, c.max, got, len(got), c.want)
+		}
+	}
+}
+
+func TestReflectedCredentialsNeverReachTheError(t *testing.T) {
+	cases := []struct{ name, user, password, message string }{
+		// Substituting a short credential everywhere multiplies the message.
+		{"dense repeats", "rpcuser", "aaaa", strings.Repeat("a", 1<<20)},
+		// A credential near where a cap would cut must not leave a partial copy.
+		{"across the cut", "rpcuser", "s3cret-pw", strings.Repeat("x", 116) + "s3cret-pw"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{"result": nil, "id": "x", "error": map[string]any{"code": -1, "message": tc.message}})
+			srv := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write(body)
+			})
+			err := New(srv.URL, tc.user, tc.password, srv.Client()).Call(context.Background(), "getchaintips", &[]any{})
+			if err == nil {
+				t.Fatal("expected an RPC error")
+			}
+			got := err.Error()
+			for _, secret := range []string{tc.user, tc.password, tc.password[:4]} {
+				if strings.Contains(got, secret) {
+					t.Errorf("error contains %q: %.160q", secret, got)
+				}
+			}
+			if len(got) > 200 {
+				t.Errorf("error is %d bytes", len(got))
+			}
+		})
+	}
+}
+
+// rawNode answers every connection with resp, verbatim.
+func rawNode(t *testing.T, resp string) string {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 4096)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte(resp))
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String()
+}
+
+func TestTransportErrorsCarryNoNodeBytes(t *testing.T) {
+	// Review of #4: net/http errors quote what the node sent, e.g.
+	// malformed HTTP status code "<password>".
+	cases := map[string]string{
+		"status code":    "HTTP/1.1 s3cret-pw OK\r\n\r\n",
+		"content-length": "HTTP/1.1 200 OK\r\nContent-Length: s3cret-pw\r\n\r\n",
+		// Fails in the body read, after the headers: textproto quotes the bad trailer line.
+		"chunked trailer": "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\ns3cret-pw-no-colon\r\n\r\n",
+	}
+	for name, resp := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := New(rawNode(t, resp), "u", "s3cret-pw", &http.Client{}).Call(t.Context(), "getpeerinfo", &[]any{})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if strings.Contains(err.Error(), "s3cret") {
+				t.Errorf("error quotes node bytes: %q", err.Error())
+			}
+		})
+	}
+}
+
+func TestRPCErrorRendersOnlyTheCode(t *testing.T) {
+	// Review of #4: substring withholding is defeated by inserting a single byte
+	// (s3c\x00retpw is logged as "s3c retpw"). The node's message is never rendered.
+	body, _ := json.Marshal(map[string]any{"result": nil, "id": "x", "error": map[string]any{"code": -28, "message": "s3c\x00ret-pw " + strings.Repeat("y", 1<<20)}})
+	var r response
+	if err := json.Unmarshal(body, &r); err != nil || r.Error == nil {
+		t.Fatalf("decoding the envelope: %v", err)
+	}
+	if got, want := r.Error.Error(), "rpc error -28 (node is warming up)"; got != want {
+		t.Errorf("Error() = %.80q, want %q", got, want)
+	}
+	if got, want := (&Error{Code: -12345}).Error(), "rpc error -12345"; got != want {
+		t.Errorf("unknown code: Error() = %q, want %q", got, want)
+	}
+}
+
+func TestConnectionResetHasItsOwnCategory(t *testing.T) {
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 4096)
+		_, _ = conn.Read(buf)
+		_ = conn.(*net.TCPConn).SetLinger(0) // close with RST
+		_ = conn.Close()
+	}()
+	err = New("http://"+ln.Addr().String(), "", "", &http.Client{}).Call(t.Context(), "getpeerinfo", &[]any{})
+	if !errors.Is(err, ErrConnReset) {
+		t.Errorf("err = %v, want ErrConnReset", err)
+	}
+}
+
+func TestTLSAlertIsATLSError(t *testing.T) {
+	// Review of #4: over TCP a received alert is *net.OpError{Op: "remote error"},
+	// not tls.AlertError, so a node requiring a client certificate read as a
+	// malformed response.
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	err := New(srv.URL, "", "", srv.Client()).Call(t.Context(), "getpeerinfo", &[]any{})
+	if !errors.Is(err, ErrTLS) {
+		t.Errorf("err = %v, want ErrTLS", err)
 	}
 }
