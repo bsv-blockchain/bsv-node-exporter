@@ -18,8 +18,8 @@ jobs:
       - run: go test ./... -race -count=1
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.10.1
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          version: v2.14.0
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   # The release build without publishing: proves the goreleaser, buildx and
   # SBOM path on every PR instead of first on a tag. No write scopes.
@@ -35,13 +35,13 @@ jobs:
           go-version-file: go.mod
       - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          syft-version: v1.52.0
+          syft-version: v1.54.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          version: v0.37.2
+          version: v0.38.0
           cache-binary: false
-          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          driver-opts: image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          version: v2.18.2
+          version: v2.18.3
           args: release --snapshot --clean
