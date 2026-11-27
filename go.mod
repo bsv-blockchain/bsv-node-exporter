@@ -2,7 +2,7 @@ module github.com/bsv-blockchain/bsv-node-exporter
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.11
 
 require github.com/prometheus/client_golang v1.25.0
 
